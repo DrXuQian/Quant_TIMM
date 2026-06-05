@@ -72,11 +72,22 @@ def export_if_needed(model_name):
     model = timm.create_model(model_name, pretrained=True).eval()
     size = model.default_cfg.get("input_size", (3, 224, 224))
     dummy = torch.randn(1, *size)
-    torch.onnx.export(
-        model, dummy, path, opset_version=17,
-        input_names=["input"], output_names=["output"],
-        dynamic_axes={"input": {0: "batch"}, "output": {0: "batch"}},
-    )
+    # The torch 2.x dynamo exporter fails to decompose some graphs (e.g. beit's
+    # attention). Fall back to the legacy TorchScript exporter (dynamo=False),
+    # which is more robust for these timm models.
+    try:
+        torch.onnx.export(
+            model, dummy, path, opset_version=17,
+            input_names=["input"], output_names=["output"],
+            dynamic_axes={"input": {0: "batch"}, "output": {0: "batch"}},
+            dynamo=False,
+        )
+    except Exception:
+        torch.onnx.export(
+            model, dummy, path, opset_version=17,
+            input_names=["input"], output_names=["output"],
+            dynamic_axes={"input": {0: "batch"}, "output": {0: "batch"}},
+        )
     return path
 
 
