@@ -4,7 +4,7 @@ quantized_models/
 imagenet_val_sample/
 *.onnx
 *.onnx.data
-*_run.log
+*.log
 # Transient default output; curated copies live under results/
 experiment_results.json
 
