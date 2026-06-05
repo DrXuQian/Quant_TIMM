@@ -142,6 +142,7 @@ def worker_main(args):
             op_types_to_quantize=["Conv", "MatMul", "Gemm"],
             calibration_eps=["cpu"],
             high_precision_dtype=args.high_precision,
+            use_zero_point=args.zero_point,        # True => asymmetric INT8
             output_path=out_path,
         )
     else:
@@ -159,6 +160,9 @@ def worker_main(args):
         extra = {}
         if args.method == "percentile":
             extra["CalibPercentile"] = args.percentile
+        # zero_point=True => asymmetric activations (weights stay symmetric/per-channel).
+        extra["ActivationSymmetric"] = not args.zero_point
+        extra["WeightSymmetric"] = True
         # Some graphs (mobilevit, convmixer, transformers) need shape inference +
         # optimization before static quantization, otherwise entropy/percentile
         # fail ("run pre-processing before quantization"). minmax tolerates its
@@ -295,6 +299,8 @@ def main():
     ap.add_argument("--per-channel", action="store_true")
     ap.add_argument("--high-precision", default="fp32")
     ap.add_argument("--percentile", type=float, default=99.99)
+    ap.add_argument("--zero-point", action="store_true",
+                    help="asymmetric INT8 activations (zero_point != 0)")
     ap.add_argument("--models", nargs="+")
     ap.add_argument("--calib", type=int, default=150)
     ap.add_argument("--eval", type=int, default=250)
