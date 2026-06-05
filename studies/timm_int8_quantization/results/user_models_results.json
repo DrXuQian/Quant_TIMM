@@ -371,49 +371,69 @@
       }
     }
   },
-  "convmixer_768_32": {
-    "fp_top1": 0.816,
-    "fp_ms_per_img": 98.39,
+  "beit_base_patch16_224": {
+    "error": "Failed to decompose the FX graph for ONNX compatibility. \u001b[96mThis is step 2/3\u001b[0m of exporting the model to ONNX. Next steps:\n- Create an issue in the PyTorch GitHub repository against the \u001b[96m*torch.export*\u001b[0m component and attach the full error stack as well as reproduction scripts.\n- Create an error report with `torch.onnx.export(..., report=True)`, and save the ExportedProgram as a pt2 file. Create an issue in the PyTorch GitHub repository against the \u001b[96m*onnx*\u001b[0m component. Attach the error report and the pt2 model.\n\n## Exception summary\n\n<class 'ValueError'>: Cannot view a tensor with shape torch.Size([s77, 197, 12, 64]) and strides (151296, 64, 12608, 1) as a tensor with shape (s77, 197, 768)!\n\nWhile executing %view_4 : [num_users=1] = call_function[target=torch.ops.aten.view.default](args = (%transpose_1, [%sym_size_int_2, 197, 768]), kwargs = {})\nOriginal traceback:\nFile \"/usr/local/lib/python3.11/dist-packages/timm/models/beit.py\", line 826, in forward\n    x = self.forward_features(x)\n  File \"/usr/local/lib/python3.11/dist-packages/timm/models/beit.py\", line 388, in forward\n    x = x + self.drop_path1(self.gamma_1 * self.attn(self.norm1(x), shared_rel_pos_bias=shared_rel_pos_bias))\n  File \"/usr/local/lib/python3.11/dist-packages/timm/models/beit.py\", line 249, in forward\n    x = x.transpose(1, 2).reshape(B, N, C)\nUse tlparse to see full graph. (https://github.com/pytorch/tlparse?tab=readme-ov-file#tlparse-parse-structured-pt2-logs)\n\n(Refer to the full stack trace above for more information.)"
+  },
+  "mobilevit_s": {
+    "fp_top1": 0.812,
+    "fp_ms_per_img": 19.77,
     "methods": {
       "ort/minmax-pc": {
-        "top1": 0.684,
-        "delta_acc": -0.132,
-        "agreement": 0.744,
-        "cosine": 0.6706,
-        "quant_s": 65.0,
+        "top1": 0.22,
+        "delta_acc": -0.592,
+        "agreement": 0.252,
+        "cosine": 0.0722,
+        "quant_s": 9.1,
         "has_naninf": false
       },
       "ort/entropy-pc": {
-        "error": "exit -9"
+        "top1": 0.22,
+        "delta_acc": -0.592,
+        "agreement": 0.252,
+        "cosine": 0.0722,
+        "quant_s": 27.2,
+        "has_naninf": false
       },
       "ort/percentile-99.99": {
-        "error": "exit -9"
+        "top1": 0.728,
+        "delta_acc": -0.084,
+        "agreement": 0.796,
+        "cosine": 0.7832,
+        "quant_s": 29.8,
+        "has_naninf": false
       },
       "ort/percentile-99.9": {
-        "error": "exit -9"
+        "top1": 0.676,
+        "delta_acc": -0.136,
+        "agreement": 0.7,
+        "cosine": 0.8087,
+        "quant_s": 30.5,
+        "has_naninf": false
       },
       "ort/percentile-99.0": {
-        "error": "exit -9"
+        "top1": 0.0,
+        "delta_acc": -0.812,
+        "agreement": 0.0,
+        "cosine": 0.5553,
+        "quant_s": 30.4,
+        "has_naninf": false
       },
       "modelopt/entropy": {
-        "top1": 0.812,
-        "delta_acc": -0.004,
-        "agreement": 0.944,
-        "cosine": 0.9627,
-        "quant_s": 125.3,
+        "top1": 0.8,
+        "delta_acc": -0.012,
+        "agreement": 0.908,
+        "cosine": 0.9319,
+        "quant_s": 20.0,
         "has_naninf": false
       },
       "modelopt/max": {
-        "top1": 0.58,
-        "delta_acc": -0.236,
-        "agreement": 0.616,
-        "cosine": 0.3502,
-        "quant_s": 69.0,
+        "top1": 0.776,
+        "delta_acc": -0.036,
+        "agreement": 0.904,
+        "cosine": 0.9337,
+        "quant_s": 10.9,
         "has_naninf": false
       }
     }
-  },
-  "beit_base_patch16_224": {
-    "error": "Failed to decompose the FX graph for ONNX compatibility. \u001b[96mThis is step 2/3\u001b[0m of exporting the model to ONNX. Next steps:\n- Create an issue in the PyTorch GitHub repository against the \u001b[96m*torch.export*\u001b[0m component and attach the full error stack as well as reproduction scripts.\n- Create an error report with `torch.onnx.export(..., report=True)`, and save the ExportedProgram as a pt2 file. Create an issue in the PyTorch GitHub repository against the \u001b[96m*onnx*\u001b[0m component. Attach the error report and the pt2 model.\n\n## Exception summary\n\n<class 'ValueError'>: Cannot view a tensor with shape torch.Size([s77, 197, 12, 64]) and strides (151296, 64, 12608, 1) as a tensor with shape (s77, 197, 768)!\n\nWhile executing %view_4 : [num_users=1] = call_function[target=torch.ops.aten.view.default](args = (%transpose_1, [%sym_size_int_2, 197, 768]), kwargs = {})\nOriginal traceback:\nFile \"/usr/local/lib/python3.11/dist-packages/timm/models/beit.py\", line 826, in forward\n    x = self.forward_features(x)\n  File \"/usr/local/lib/python3.11/dist-packages/timm/models/beit.py\", line 388, in forward\n    x = x + self.drop_path1(self.gamma_1 * self.attn(self.norm1(x), shared_rel_pos_bias=shared_rel_pos_bias))\n  File \"/usr/local/lib/python3.11/dist-packages/timm/models/beit.py\", line 249, in forward\n    x = x.transpose(1, 2).reshape(B, N, C)\nUse tlparse to see full graph. (https://github.com/pytorch/tlparse?tab=readme-ov-file#tlparse-parse-structured-pt2-logs)\n\n(Refer to the full stack trace above for more information.)"
   }
 }
