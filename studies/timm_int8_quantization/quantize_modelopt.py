@@ -26,7 +26,12 @@ except ImportError:
     print("  pip install nvidia-modelopt[onnx]")
 
 
-CALIBRATION_METHODS = ["minmax", "entropy", "percentile", "mse"]
+# NOTE: ModelOpt ONNX-INT8 only supports 'entropy' (default) and 'max'.
+# 'minmax' / 'percentile' / 'distribution' are ONNX Runtime methods and are
+# handled by quantize_with_onnxruntime() below, not by the ModelOpt path.
+MODELOPT_CALIBRATION_METHODS = ["entropy", "max"]
+ORT_CALIBRATION_METHODS = ["minmax", "entropy", "percentile"]
+CALIBRATION_METHODS = ["minmax", "entropy", "percentile", "mse"]  # legacy/back-compat
 
 REPRESENTATIVE_MODELS = [
     "mobilenetv3_large_100",

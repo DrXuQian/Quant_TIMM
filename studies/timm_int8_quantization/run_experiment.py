@@ -137,6 +137,7 @@ def worker_main(args):
         from onnxruntime.quantization import (
             CalibrationMethod, QuantType, quantize_static,
         )
+        from onnxruntime.quantization.shape_inference import quant_pre_process
 
         method_map = {
             "minmax": CalibrationMethod.MinMax,
@@ -147,8 +148,18 @@ def worker_main(args):
         extra = {}
         if args.method == "percentile":
             extra["CalibPercentile"] = args.percentile
+        # Some graphs (mobilevit, convmixer, transformers) need symbolic shape
+        # inference + optimization before static quantization, otherwise the
+        # entropy/percentile calibrators fail ("run pre-processing before
+        # quantization"). minmax tolerates its absence; the others don't.
+        prepped = onnx_path
+        try:
+            prepped = out_path + ".prep.onnx"
+            quant_pre_process(onnx_path, prepped, skip_symbolic_shape=False)
+        except Exception:
+            prepped = onnx_path  # fall back to raw model
         quantize_static(
-            model_input=onnx_path,
+            model_input=prepped,
             model_output=out_path,
             calibration_data_reader=_ListReader(calib_samples),
             calibrate_method=method_map[args.method],
@@ -273,6 +284,8 @@ def main():
     ap.add_argument("--calib", type=int, default=150)
     ap.add_argument("--eval", type=int, default=250)
     ap.add_argument("--output", type=str, default="experiment_results.json")
+    ap.add_argument("--resume", action="store_true",
+                    help="load existing --output and skip models already completed")
     args = ap.parse_args()
 
     if args.worker:
@@ -288,16 +301,28 @@ def main():
     print(f"Real images: {len(pairs)} total -> {args.calib} calib, "
           f"{min(args.eval, len(pairs)-args.calib)} eval")
 
+    # Resume: keep previously completed models, skip them this run.
     all_results = {}
+    if args.resume and os.path.exists(args.output):
+        all_results = json.load(open(args.output))
+        done = [m for m, r in all_results.items()
+                if isinstance(r, dict) and "fp_top1" in r]
+        print(f"Resuming: {len(done)} models already in {args.output}, will skip them")
+
     for m in args.models:
+        if args.resume and m in all_results and "fp_top1" in all_results.get(m, {}):
+            print(f"[{m}] skip (already done)")
+            continue
         try:
             all_results[m] = run_model(m, args.calib, args.eval)
         except Exception as e:
             print(f"[{m}] FAILED: {e}")
             all_results[m] = {"error": str(e)}
+        # Incremental save after EVERY model so a crash never loses prior work.
+        json.dump(all_results, open(args.output, "w"), indent=2)
+        print(f"  [saved {len([1 for r in all_results.values() if 'fp_top1' in r])} models -> {args.output}]")
 
-    json.dump(all_results, open(args.output, "w"), indent=2)
-    print(f"\nSaved -> {args.output}")
+    print(f"\nDone -> {args.output}")
 
 
 if __name__ == "__main__":

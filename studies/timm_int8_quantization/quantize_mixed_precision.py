@@ -2,13 +2,16 @@
 
 This script identifies layers that are sensitive to quantization (depthwise conv,
 SE blocks, sigmoid/swish activations) and excludes them from INT8, leaving them in
-the high-precision dtype.
+FP32. This is exactly what ModelOpt's default entropy path does automatically
+(it skips all depthwise convs); this script makes the exclusion explicit and
+controllable for the ONNX Runtime backend, which otherwise quantizes every layer.
 
-IMPORTANT: the high-precision dtype is FP32 here, NOT FP16. The dominant cause of
-accuracy loss for these models is ModelOpt's default of casting non-INT8 ops to
-FP16, where tiny depthwise/grouped-conv weights underflow. Keeping excluded layers
-in FP16 would therefore NOT help. Fixing high_precision_dtype to fp32/bf16 is the
-primary lever; this mixed-precision exclusion is a secondary refinement.
+See analysis.md for the verified root cause: the accuracy loss on these models
+comes from (1) min/max activation calibration being wrecked by long-tailed
+activations and (2) quantizing the sensitive (depthwise) layers. Excluding those
+layers + percentile/entropy calibration is the fix. (high_precision_dtype stays
+fp32 here; the fp16 high-precision path is a separate GPU/TensorRT-only concern
+and is NOT evaluable on the onnxruntime CPU EP.)
 
 Usage:
     python quantize_mixed_precision.py --model mobilenetv3_large_100 --strategy depthwise_fp16
