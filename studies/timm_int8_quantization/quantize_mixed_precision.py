@@ -1,8 +1,14 @@
-"""Mixed-precision INT8 quantization: keep sensitive layers in FP16.
+"""Mixed-precision INT8 quantization: keep sensitive layers out of INT8.
 
 This script identifies layers that are sensitive to quantization (depthwise conv,
-SE blocks, sigmoid/swish activations) and excludes them from INT8 quantization,
-keeping them in FP16 for better accuracy.
+SE blocks, sigmoid/swish activations) and excludes them from INT8, leaving them in
+the high-precision dtype.
+
+IMPORTANT: the high-precision dtype is FP32 here, NOT FP16. The dominant cause of
+accuracy loss for these models is ModelOpt's default of casting non-INT8 ops to
+FP16, where tiny depthwise/grouped-conv weights underflow. Keeping excluded layers
+in FP16 would therefore NOT help. Fixing high_precision_dtype to fp32/bf16 is the
+primary lever; this mixed-precision exclusion is a secondary refinement.
 
 Usage:
     python quantize_mixed_precision.py --model mobilenetv3_large_100 --strategy depthwise_fp16
@@ -196,9 +202,9 @@ def sensitivity_analysis(
 
 
 STRATEGIES = {
-    "depthwise_fp16": "Keep depthwise conv layers in FP16",
-    "se_fp16": "Keep SE block layers in FP16",
-    "depthwise_se_fp16": "Keep both depthwise conv and SE blocks in FP16",
+    "depthwise_fp16": "Keep depthwise conv layers out of INT8 (high-precision dtype)",
+    "se_fp16": "Keep SE block layers out of INT8 (high-precision dtype)",
+    "depthwise_se_fp16": "Keep depthwise conv + SE blocks out of INT8 (high-precision dtype)",
     "sensitivity_analysis": "Run per-layer sensitivity analysis, exclude top-K sensitive layers",
 }
 
@@ -212,6 +218,7 @@ def quantize_mixed_precision(
     num_calib_samples: int = 100,
     sensitivity_top_k: int = 10,
     dataset_path: str = None,
+    high_precision_dtype: str = "fp32",
 ):
     """Quantize with mixed precision based on the chosen strategy."""
     onnx_path = os.path.join(onnx_dir, f"{model_name}.onnx")
@@ -256,14 +263,15 @@ def quantize_mixed_precision(
 
     try:
         if HAS_MODELOPT:
+            mo_method = calibration_method if calibration_method in ("entropy", "max") else "entropy"
             moq.quantize(
                 onnx_path,
                 output_path=out_path,
                 quantize_mode="int8",
                 calibration_data_reader=data_reader,
-                calibration_method=calibration_method,
+                calibration_method=mo_method,
                 op_types_to_quantize=["Conv", "MatMul", "Gemm"],
-                per_channel=True,
+                high_precision_dtype=high_precision_dtype,
                 nodes_to_exclude=exclude_nodes,
             )
         elif HAS_ORT_QUANT:
@@ -312,6 +320,8 @@ def main():
     parser.add_argument("--num-calib-samples", type=int, default=100)
     parser.add_argument("--sensitivity-top-k", type=int, default=10)
     parser.add_argument("--dataset-path", type=str, default=None)
+    parser.add_argument("--high-precision-dtype", type=str, default="fp32",
+                        choices=["fp32", "fp16", "bf16"])
     args = parser.parse_args()
 
     strategies = list(STRATEGIES.keys()) if args.strategy == "all" else [args.strategy]
@@ -326,6 +336,7 @@ def main():
             num_calib_samples=args.num_calib_samples,
             sensitivity_top_k=args.sensitivity_top_k,
             dataset_path=args.dataset_path,
+            high_precision_dtype=args.high_precision_dtype,
         )
         all_results[strategy] = result
 

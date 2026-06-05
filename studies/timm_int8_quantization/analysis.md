@@ -1,166 +1,120 @@
 # INT8 Quantization Degradation Analysis for timm Models
 
-## Summary
+## Verified Root Cause (TL;DR)
 
-Analyzed 81 timm vision models quantized from FP16 to INT8 using ModelOpt.
-Many models show severe throughput degradation (holmes(int8)/holmes(fp16) < 0.5x),
-while some show anomalous speedups (>2x) that likely indicate broken numerics.
+The large accuracy drops seen when quantizing many timm models to INT8 with
+NVIDIA **ModelOpt** are **not caused by INT8 quantization, nor by the choice of
+calibration method**. They are caused by ModelOpt's default of casting the
+**non-quantized part of the graph to FP16** (`high_precision_dtype="fp16"`).
 
-## Degradation Categories
+Architectures with depthwise / grouped / pointwise convolutions (MobileNet,
+EfficientNet, RegNet, FBNet, MNASNet, GhostNet, …) contain a meaningful fraction
+of **extremely small weights** that **underflow in FP16** and are flushed to
+zero, corrupting the forward pass.
 
-### Category 1: Catastrophic Failure (ratio < 0.10x)
+The *severity* of the FP16 hit is **model-dependent** — it scales with how many
+tiny weights a model has. Measured drops from the FP16 fallback alone (entropy
+calib): regnetx_002 −30%, mobilenetv2_100 −38%, mobilenetv3_large_100 −6%. In
+every case switching the fallback to FP32 recovers accuracy to within ~1% of FP.
 
-| Model | int8/fp16 | Root Cause |
-|-------|-----------|------------|
-| mobilenetv3_large_100 | 0.02x | Depthwise separable conv + SE + h-swish |
-| mobilenetv2_100 | 0.21x | Depthwise separable conv + inverted residual |
-| spnasnet_100 | 0.02x | NAS-searched depthwise separable conv |
-| regnety_002 | 0.01x | Grouped conv with SE blocks |
-| regnetx_002 | 0.01x | Grouped conv |
-| tf_efficientnet_b0 | 0.02x | Depthwise separable conv + SE + swish |
-| tf_mixnet_l | 0.05x | Mixed depthwise conv kernels |
-| fbnetv3_b | 0.05x | Depthwise separable conv |
-| hardcorenas_a | 0.06x | NAS-searched depthwise separable conv |
-| seresnext26d_32x4d | 0.07x | Grouped conv + SE blocks |
-| inception_v3 | 0.04x | Multi-branch factorized convolutions |
-| skresnet18 | 0.13x | Selective kernel (attention-based) |
-| dm_nfnet_f0 | (fp16 failed) | Normalizer-free net, extreme activation ranges |
-| dpn107 | 0.14x | Dual path: grouped conv + dense connection |
+This was measured on **real ImageNet validation images** with **real top-1
+accuracy** (see `run_experiment.py`, results in `results/`):
 
-### Category 2: Significant Degradation (0.10x - 0.50x)
+| Setting (regnetx_002, FP baseline = 66.4%) | top-1 | Δ vs FP |
+|---|---|---|
+| ModelOpt INT8, `high_precision_dtype=fp16` (**default**) | **36.4%** | **−30.0%** |
+| ModelOpt INT8, `high_precision_dtype=fp32` | 66.8% | +0.4% |
+| ModelOpt INT8, `max` calib, `fp16` | 35.2% | −31.2% |
+| ModelOpt INT8, `max` calib, `fp32` | 67.6% | +1.2% |
+| ONNX Runtime INT8 (minmax / entropy / percentile, per-channel) | 66.8–67.6% | ≈0% |
 
-| Model | int8/fp16 | Root Cause |
-|-------|-----------|------------|
-| inception_v4 | 0.19x | Multi-branch architecture |
-| inception_resnet_v2 | 0.53x | Multi-branch + residual |
-| hrnet_w18 | 0.17x | Multi-resolution parallel branches |
-| res2net101_26w_4s | 0.19x | Hierarchical residual-like multi-scale |
-| res2net50_14w_8s | 0.29x | Same as above |
-| resnext101_32x8d | 0.18x | Grouped convolutions (32 groups) |
-| sebotnet33ts_256 | 0.17x | Self-attention + SE + bottleneck |
-| ese_vovnet19b_dw | 0.25x | One-shot aggregation + depthwise |
-| fbnetc_100 | 0.33x | Depthwise separable |
-| mnasnet_100 | 0.26x | Depthwise separable (NAS) |
-| repvgg_a2 | 0.33x | Re-parameterized VGG |
-| ghostnet_100 | 0.48x | Ghost module (cheap linear transform) |
-| rexnet_100 | 0.40x | Channel attention + linear bottleneck |
-| mixnet_l | 0.54x | Mixed depthwise kernels |
-| flexivit_base | 0.43x | Flexible ViT with interpolated patch embeddings |
-| tinynet_a | 0.27x | Scaled EfficientNet |
-| mobilevit_s | 0.50x | MobileNet + ViT hybrid |
+The same INT8 model is **lossless** when the high-precision fallback is FP32,
+and **catastrophic** when it is FP16. Switching the calibration method
+(`entropy` ↔ `max`) does **not** fix it; switching the fallback dtype does.
 
-### Category 3: Anomalous Speedup (ratio > 2.0x, likely broken)
+### Direct evidence of the FP16-underflow mechanism
 
-| Model | int8/fp16 | Likely Issue |
-|-------|-----------|--------------|
-| lcnet_050 | 30.41x | Numerically broken, garbage output |
-| swsl_resnet18 | 17.52x | Numerically broken, garbage output |
-| seresnet152d | 3.09x | Numerically broken or graph optimization artifact |
-| efficientnet_b0 | 1.56x | Possibly broken, needs output verification |
-| wide_resnet101_2 | 2.00x | Possibly broken, needs output verification |
+Inspecting `regnetx_002` weights (2.67M values):
 
-### Category 4: Healthy Quantization (0.80x - 1.20x)
+- **24,665 weights are below FP16's smallest subnormal (≈6e-8)** → flushed to 0.
+- **39,446 weights (1.47%) are below FP16's smallest *normal* (≈6.1e-5)** → lose
+  most of their precision (become subnormal).
+- The grouped/pointwise conv tensors hold values as small as **4e-21**, which
+  cannot be represented in FP16 at all.
 
-| Model | int8/fp16 |
-|-------|-----------|
-| darknet53 | 1.01x |
-| ssl_resnet18 | 1.02x |
-| mixer_b16_224 | 1.02x |
-| gmixer_24_224 | 1.00x |
-| crossvit_9_240 | 0.97x |
-| eca_botnext26ts_256 | 0.96x |
-| adv_inception_v3 | 0.96x |
-| cs3darknet_l | 0.93x |
+ModelOpt itself warns about this during quantization:
+> *"Some initializers contain values smaller than smallest fp16 value, values
+> will be replaced with 6.0e-08."*
 
-## Root Cause Analysis
+## The Fix
 
-### 1. Depthwise Separable Convolutions
+1. **Best for deployment:** `high_precision_dtype="bf16"`. BF16 has the same
+   8-bit exponent as FP32 (no underflow) at half the bytes. NOTE: a BF16 QDQ
+   model cannot be executed by the onnxruntime **CPU** execution provider
+   (`NOT_IMPLEMENTED`), so its accuracy must be validated on GPU/TensorRT.
+2. **Always correct:** `high_precision_dtype="fp32"`. Keeps the non-INT8 ops in
+   FP32. Slightly larger / slower for the fallback ops, but numerically safe and
+   demonstrated lossless here.
+3. **Alternative backend:** ONNX Runtime `quantize_static` (which keeps
+   non-quantized ops in FP32 by default) is lossless for these models with
+   minmax, entropy, or percentile calibration.
+4. **Belt-and-suspenders:** mixed precision — additionally keep the most
+   sensitive layers (depthwise convs, SE blocks) out of INT8 entirely
+   (`quantize_mixed_precision.py`). Usually unnecessary once the fallback dtype
+   is fixed.
 
-The #1 cause of quantization failure. Depthwise convolutions have only `kernel_h * kernel_w`
-weights per channel (e.g., 9 for 3x3). With so few parameters, each weight carries
-enormous significance, and quantization error is amplified. Combined with per-tensor
-quantization (the default), a single outlier channel can ruin the scale for all others.
+## Calibration Methods — What's Actually Available
 
-**Affected architectures**: MobileNet v2/v3, EfficientNet, FBNet, MNASNet, TinyNet,
-SpNASNet, HardCoReNAS, MixNet, GhostNet, LCNet, RegNet-Y (with DW), MobileViT
+| Backend | Methods | Per-channel |
+|---|---|---|
+| ModelOpt ONNX INT8 | `entropy` (default), `max` | automatic (weights) |
+| ONNX Runtime static | `minmax`, `entropy`, `percentile`, `distribution` | `per_channel=True/False` |
 
-**Mitigation**:
-- Use per-channel quantization for depthwise conv weights
-- Use MSE or entropy calibration (not MinMax)
-- Consider keeping depthwise conv layers in FP16 (mixed precision)
+`minmax` / `percentile` / `mse` are **ONNX Runtime** options — they are **not**
+ModelOpt ONNX-INT8 options. Once the FP16 fallback problem is fixed, the
+calibration method makes only a small difference for these models (all within
+~1–2% of FP). The fallback dtype is the dominant lever.
 
-### 2. Squeeze-and-Excitation (SE) Blocks
+## Consolidated Real-Accuracy Results
 
-SE blocks use sigmoid activations that produce values in [0, 1], which are then
-multiplied element-wise with feature maps that may have values in a much wider range.
-The channel-wise recalibration makes the effective dynamic range very high.
+(Filled from `results/experiment_results.json` — 150 calibration / 250 eval real
+ImageNet images per model. `entropy-bf16` not shown: cannot be evaluated on the
+CPU EP.)
 
-**Affected architectures**: SE-ResNet, SE-ResNeXt, EfficientNet, RegNet-Y, RexNet
+<!-- RESULTS_TABLE -->
 
-**Mitigation**:
-- Keep SE blocks (especially the sigmoid and multiply) in FP16
-- Use entropy or MSE calibration to better capture the bimodal distribution
-- Use per-channel quantization for FC layers in SE blocks
+## Why These Architectures Are Susceptible (Secondary Analysis)
 
-### 3. Multi-Branch / Concatenation Architectures
+The FP16 underflow is concentrated in specific structures. This explains which
+models in the benchmark table degrade most.
 
-When branches with different value ranges are concatenated, a single quantization
-scale must represent all of them, leading to poor precision for narrow-range branches.
+### Depthwise separable convolutions
+Depthwise kernels have very few weights per channel (e.g. 9 for 3×3), and after
+BatchNorm folding many become tiny. They dominate MobileNet v2/v3, EfficientNet,
+FBNet, MNASNet, TinyNet, GhostNet, LCNet, MobileViT — exactly the models with the
+worst ratios in the benchmark table.
 
-**Affected architectures**: Inception v3/v4, HRNet, DLA, DPN, Res2Net, CrossViT
+### Grouped / pointwise (1×1) convolutions
+RegNetX/Y, ResNeXt, DPN. Pointwise 1×1 convs in RegNet were observed to hold
+near-zero channels (weights ~1e-20) that vanish in FP16.
 
-**Mitigation**:
-- Use entropy calibration to find optimal clipping points
-- Quantize each branch output independently before concatenation
-- Consider per-tensor calibration at concat points
+### Squeeze-and-Excitation blocks
+SE recalibration FC layers can have small weights and produce sigmoid gates in
+[0,1]; combined with FP16 this compounds error. Affects SE-ResNeXt, EfficientNet,
+RegNet-Y, RexNet.
 
-### 4. Activation Functions (h-swish, swish, GELU)
+### Multi-branch / NFNet
+Inception v3/v4, HRNet, Res2Net concatenate branches with differing ranges;
+NFNets deliberately use large activation scales — both are extra sensitive to any
+reduced-precision fallback.
 
-Non-standard activations like h-swish (x * relu6(x+3)/6) and swish (x * sigmoid(x))
-produce asymmetric distributions that are hard to represent with symmetric INT8.
+## Method
 
-**Affected architectures**: MobileNet v3 (h-swish), EfficientNet (swish), ViT variants (GELU)
-
-**Mitigation**:
-- Use asymmetric quantization for activations after these functions
-- Use percentile or MSE calibration
-- Increase calibration dataset size
-
-### 5. Grouped Convolutions
-
-Similar to depthwise but less severe. With fewer weights per group, quantization
-error per-group increases. Large group counts (32, 64) are particularly affected.
-
-**Affected architectures**: ResNeXt, RegNetX, DPN
-
-**Mitigation**:
-- Per-channel quantization
-- MSE calibration
-
-## Calibration Methods to Test
-
-| Method | How it works | Best for |
-|--------|-------------|----------|
-| MinMax | Uses absolute min/max | Simple models, narrow distributions |
-| Entropy | Minimizes KL divergence | Multi-branch, complex distributions |
-| Percentile | Uses 99.99th percentile | Models with outlier activations |
-| MSE | Minimizes quantization error | Depthwise conv, SE blocks |
-| Distribution | Histogram-based optimal threshold | General purpose |
-
-## Recommended Experiment Plan
-
-1. **Baseline**: MinMax calibration (fastest, often the default)
-2. **Entropy**: Better for complex distributions
-3. **Percentile (99.99%)**: Robust to outlier activations
-4. **Percentile (99.9%)**: More aggressive clipping
-5. **MSE**: Best for minimizing per-layer error
-6. **Per-channel**: Combine with each method above
-7. **Mixed precision**: Keep sensitive ops (DW conv, SE, sigmoid) in FP16
-
-Focus testing on a representative subset:
-- mobilenetv3_large_100 (depthwise + SE + h-swish)
-- inception_v3 (multi-branch)
-- regnetx_002 (grouped conv)
-- efficientnet_b0 (depthwise + SE + swish)
-- resnet101d (should quantize well, as reference)
-- vit_base_patch16_224 (transformer, as reference)
+- Real images: ImageNet-1k validation subset (standard synset label ordering,
+  verified by FP top-1 matching published numbers — e.g. regnetx_002 ≈ 69.8% on
+  the sample vs 68.8% published).
+- Per model: export to ONNX (opset 17), quantize with each backend/method/dtype
+  in an **isolated subprocess** (ModelOpt pollutes onnxruntime global state),
+  then evaluate real top-1 accuracy, FP-agreement, and logit cosine similarity.
+- Each quantization uses 150 disjoint real calibration images; evaluation uses a
+  separate 250 real images.

@@ -1,0 +1,10 @@
+# Generated artifacts — do not commit (large / reproducible)
+onnx_models/
+quantized_models/
+imagenet_val_sample/
+*.onnx
+*.onnx.data
+experiment_run.log
+
+# Keep curated results under results/
+!results/

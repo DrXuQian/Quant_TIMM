@@ -53,8 +53,17 @@ def quantize_with_modelopt(
     per_channel: bool = True,
     use_random_data: bool = False,
     dataset_path: str = None,
+    high_precision_dtype: str = "fp32",
 ):
     """Quantize an ONNX model to INT8 using ModelOpt.
+
+    NOTE: ModelOpt ONNX-INT8 only supports calibration_method in {'entropy','max'}
+    and does per-channel weight quantization automatically (no per_channel arg).
+
+    high_precision_dtype controls the dtype of the NON-quantized part of the graph.
+    ModelOpt defaults to 'fp16', which silently destroys accuracy on models with
+    tiny weights (depthwise/grouped convs underflow in FP16). We default to 'fp32'.
+    Use 'bf16' for deployment (FP32 range, half the bytes; needs GPU/TRT to run).
 
     Args:
         onnx_path: Path to FP32/FP16 ONNX model.
@@ -78,8 +87,13 @@ def quantize_with_modelopt(
             model_name, num_samples=num_calib_samples, dataset_path=dataset_path,
         )
 
+    if calibration_method not in ("entropy", "max"):
+        print(f"  [warn] ModelOpt INT8 supports only entropy/max; "
+              f"'{calibration_method}' -> falling back to 'entropy'")
+        calibration_method = "entropy"
+
     print(f"  Calibration method: {calibration_method}")
-    print(f"  Per-channel: {per_channel}")
+    print(f"  High-precision dtype (non-INT8 ops): {high_precision_dtype}")
     print(f"  Calibration samples: {num_calib_samples}")
 
     t0 = time.time()
@@ -90,7 +104,7 @@ def quantize_with_modelopt(
         calibration_data_reader=data_reader,
         calibration_method=calibration_method,
         op_types_to_quantize=["Conv", "MatMul", "Gemm"],
-        per_channel=per_channel,
+        high_precision_dtype=high_precision_dtype,
     )
     elapsed = time.time() - t0
     print(f"  Quantization took {elapsed:.1f}s -> {output_path}")
@@ -140,7 +154,7 @@ def quantize_with_onnxruntime(
         model_input=onnx_path,
         model_output=output_path,
         calibration_data_reader=data_reader,
-        calibration_method=calib_method,
+        calibrate_method=calib_method,   # ORT keyword is 'calibrate_method'
         per_channel=per_channel,
         activation_type=QuantType.QInt8,
         weight_type=QuantType.QInt8,
