@@ -148,16 +148,20 @@ def worker_main(args):
         extra = {}
         if args.method == "percentile":
             extra["CalibPercentile"] = args.percentile
-        # Some graphs (mobilevit, convmixer, transformers) need symbolic shape
-        # inference + optimization before static quantization, otherwise the
-        # entropy/percentile calibrators fail ("run pre-processing before
-        # quantization"). minmax tolerates its absence; the others don't.
-        prepped = onnx_path
-        try:
-            prepped = out_path + ".prep.onnx"
-            quant_pre_process(onnx_path, prepped, skip_symbolic_shape=False)
-        except Exception:
-            prepped = onnx_path  # fall back to raw model
+        # Some graphs (mobilevit, convmixer, transformers) need shape inference +
+        # optimization before static quantization, otherwise entropy/percentile
+        # fail ("run pre-processing before quantization"). minmax tolerates its
+        # absence; the others don't. Symbolic shape inference itself throws an
+        # AssertionError on attention graphs (mobilevit), so fall back to
+        # skip_symbolic_shape=True, which still does the optimization that the
+        # quantizer needs.
+        prepped = out_path + ".prep.onnx"
+        for skip_sym in (False, True):
+            try:
+                quant_pre_process(onnx_path, prepped, skip_symbolic_shape=skip_sym)
+                break
+            except Exception:
+                prepped = onnx_path  # last resort: raw model
         quantize_static(
             model_input=prepped,
             model_output=out_path,
