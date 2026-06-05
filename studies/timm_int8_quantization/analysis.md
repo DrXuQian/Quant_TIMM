@@ -45,6 +45,55 @@ In order of impact, all verified on CPU with faithful FP32-scale QDQ:
    was the most robust single setting across every model tested (within ~3% of
    FP everywhere).
 
+## "entropy" is NOT "mixed precision" — where ModelOpt's win actually comes from
+
+The strong accuracy of the `modelopt/entropy` run is **two separate things
+bundled together**:
+
+- **entropy** = the *calibration method* (how the INT8 range is chosen per tensor).
+- **selective quantization** = ModelOpt's default of leaving the most sensitive
+  layers (all depthwise convs) un-quantized. This is **mixed precision**, applied
+  automatically.
+
+The win is almost entirely the **selective (mixed-precision) part**, not the
+calibration method. Proof: on lcnet_050, **ORT entropy (all layers) = 1.6%** vs
+**ModelOpt entropy (selective) = 58.4%** — *both use entropy calibration*; the
+57-point gap is the depthwise skipping alone.
+
+### Why ModelOpt skips depthwise (it is fusion/perf-driven, not an accuracy flag)
+Verified empirically: every depthwise conv is left un-quantized (lcnet: all 13,
+efficientnet: all 16). The mechanism (`graph_utils.py`):
+1. A **small-channel rule** — convs with in/out channels < 16 are excluded
+   (depthwise weight shape is `[C,1,k,k]`, so input_channel = 1 < 16).
+2. ModelOpt's **TensorRT fusion-aware partitioning** (`classify_partition_nodes`
+   / `filter_quantizable_kgen_heads`) only quantizes conv "heads" that TRT can
+   fuse into efficient INT8 kernels; depthwise are not profitable INT8 targets.
+
+So it is a **TensorRT performance decision that happens to also be accuracy-
+optimal**. Consequence: a pipeline that force-quantizes all layers (e.g. passing
+`op_types_to_quantize` to cover everything) **loses this protection** — which is
+the likely reason the benchmark table's INT8 models degrade.
+
+## Asymmetric INT8 (zero-point ≠ 0) — an independent lever
+
+`use_zero_point=True` (ModelOpt) / `ActivationSymmetric=False` (ORT) lets the INT8
+activation range be `[min, max]` with a non-zero zero-point instead of symmetric
+`[-max, max]`. swish/GELU activations are skewed (min ≈ −0.28, positive
+unbounded), so asymmetric uses the codes far better. Measured (real top-1):
+
+| model | minmax sym→**asym** | percentile-99.99 sym→**asym** | modelopt sym→asym |
+|---|---|---|---|
+| lcnet_050 | 0.0→1.2 | 1.6→**12.4** | 62.4→62.4 |
+| efficientnet_b0 | 14.8→**34.4** | 48.8→**74.0** | 80.4→80.4 |
+| mobilevit_s | 0.4→**9.2** | 50.4→(oom) | 81.6→81.6 |
+
+- Asymmetric is a **strong, independent lever for pure-ORT** quantization: up to
+  **+25 points** when stacked with percentile (efficientnet 48.8→74.0).
+- It adds **nothing on top of ModelOpt** (selective + entropy already leaves no
+  room: 62.4→62.4, 80.4→80.4).
+- Best pure-ORT recipe (no mixed precision): **percentile + asymmetric +
+  per-channel**.
+
 ## Two Hypotheses That Were RULED OUT (measured, not guessed)
 
 ### ✗ Wrong #1: "tiny depthwise weights underflow in FP16"

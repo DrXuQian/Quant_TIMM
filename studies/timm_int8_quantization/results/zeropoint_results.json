@@ -1,0 +1,34 @@
+{
+  "lcnet_050": {
+    "fp": 68.4,
+    "methods": {
+      "ort/minmax sym": 0.0,
+      "ort/minmax ASYM": 1.2,
+      "ort/pct99.99 sym": 1.6,
+      "ort/pct99.99 ASYM": 12.4,
+      "modelopt/entropy sym": 62.4,
+      "modelopt/entropy ASYM": 62.4
+    }
+  },
+  "efficientnet_b0": {
+    "fp": 81.6,
+    "methods": {
+      "ort/minmax sym": 14.8,
+      "ort/minmax ASYM": 34.4,
+      "ort/pct99.99 sym": 48.8,
+      "ort/pct99.99 ASYM": 74.0,
+      "modelopt/entropy sym": 80.4,
+      "modelopt/entropy ASYM": 80.4
+    }
+  },
+  "mobilevit_s": {
+    "fp": 82.0,
+    "methods": {
+      "ort/minmax sym": 0.4,
+      "ort/minmax ASYM": 9.2,
+      "ort/pct99.99 sym": 50.4,
+      "modelopt/entropy sym": 81.6,
+      "modelopt/entropy ASYM": 81.6
+    }
+  }
+}
