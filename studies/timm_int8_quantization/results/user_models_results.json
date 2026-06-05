@@ -435,5 +435,67 @@
         "has_naninf": false
       }
     }
+  },
+  "convmixer_768_32": {
+    "fp_top1": 0.84,
+    "fp_ms_per_img": 89.96,
+    "methods": {
+      "ort/minmax-pc": {
+        "top1": 0.78,
+        "delta_acc": -0.06,
+        "agreement": 0.832,
+        "cosine": 0.824,
+        "quant_s": 23.4,
+        "has_naninf": false
+      },
+      "ort/entropy-pc": {
+        "top1": 0.78,
+        "delta_acc": -0.06,
+        "agreement": 0.832,
+        "cosine": 0.824,
+        "quant_s": 88.5,
+        "has_naninf": false
+      },
+      "ort/percentile-99.99": {
+        "top1": 0.824,
+        "delta_acc": -0.016,
+        "agreement": 0.94,
+        "cosine": 0.9253,
+        "quant_s": 94.4,
+        "has_naninf": false
+      },
+      "ort/percentile-99.9": {
+        "top1": 0.756,
+        "delta_acc": -0.084,
+        "agreement": 0.812,
+        "cosine": 0.9008,
+        "quant_s": 92.9,
+        "has_naninf": false
+      },
+      "ort/percentile-99.0": {
+        "top1": 0.024,
+        "delta_acc": -0.816,
+        "agreement": 0.02,
+        "cosine": 0.648,
+        "quant_s": 91.8,
+        "has_naninf": false
+      },
+      "modelopt/entropy": {
+        "top1": 0.832,
+        "delta_acc": -0.008,
+        "agreement": 0.972,
+        "cosine": 0.9675,
+        "quant_s": 37.9,
+        "has_naninf": false
+      },
+      "modelopt/max": {
+        "top1": 0.708,
+        "delta_acc": -0.132,
+        "agreement": 0.772,
+        "cosine": 0.5491,
+        "quant_s": 47.0,
+        "has_naninf": false
+      }
+    }
   }
 }
