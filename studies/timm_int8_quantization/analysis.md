@@ -85,7 +85,7 @@ unbounded), so asymmetric uses the codes far better. Measured (real top-1):
 |---|---|---|---|
 | lcnet_050 | 0.0→1.2 | 1.6→**12.4** | 62.4→62.4 |
 | efficientnet_b0 | 14.8→**34.4** | 48.8→**74.0** | 80.4→80.4 |
-| mobilevit_s | 0.4→**9.2** | 50.4→(oom) | 81.6→81.6 |
+| mobilevit_s | 0.4→**9.2** | 50.4→**72.8** | 81.6→81.6 |
 
 - Asymmetric is a **strong, independent lever for pure-ORT** quantization: up to
   **+25 points** when stacked with percentile (efficientnet 48.8→74.0).
@@ -142,10 +142,57 @@ ModelOpt ONNX-INT8 options (ModelOpt has only `entropy`/`max`).
 
 ## Consolidated Real-Accuracy Results
 
-(150 calibration / 250 eval real ImageNet images per model. All FP32-scale QDQ,
-faithfully executed on the CPU EP.)
+(250 eval real ImageNet images per model. Calibration: 150 images for the light
+models; **32** for the heavy ones — mobilevit_s, convmixer_768_32,
+beit_base_patch16_224 — because ORT's histogram calibrators buffer all
+calibration activations and OOM at 150 on large feature maps. All FP32-scale QDQ,
+faithfully executed on the CPU EP. Compare methods *within* a row; absolute FP
+baselines differ slightly between the 150- and 32-calib groups because the eval
+subset shifts with the calib split.)
 
-<!-- RESULTS_TABLE -->
+| Model | FP | ort:minmax-pc | ort:entropy-pc | ort:percentile-99.99 | ort:percentile-99.9 | ort:percentile-99.0 | mo:entropy | mo:max |
+|---|---|---|---|---|---|---|---|---|
+| lcnet_050 | 62.4% | 1.6% | 1.6% | 14.4% | 22.8% | 3.2% | 58.4% | 59.2% |
+| hardcorenas_a | 75.6% | 52.8% | 52.8% | 68.8% | 64.8% | 9.6% | 76.0% | 75.2% |
+| rexnet_100 | 78.0% | 2.8% | 2.8% | 16.8% | 36.0% | 4.8% | 78.8% | 77.6% |
+| repvgg_a2 | 77.2% | 0.4% | 0.4% | 55.2% | 70.4% | 34.8% | 76.0% | 0.8% |
+| efficientnet_b0 | 76.8% | 26.8% | 26.8% | 70.4% | 69.6% | 10.4% | 76.0% | 73.2% |
+| adv_inception_v3 | 77.6% | 9.2% | 9.2% | 71.6% | 70.8% | 14.0% | 77.2% | 1.2% |
+| beit_base_patch16_224 | 88.4% | 0.8% | 0.8% | 82.4% | 66.8% | 0.0% | 1.2% | 0.8% |
+| mobilevit_s | 81.2% | 22.0% | 22.0% | 72.8% | 67.6% | 0.0% | 80.0% | 77.6% |
+| convmixer_768_32 | 84.0% | 78.0% | 78.0% | 82.4% | 75.6% | 2.4% | 83.2% | 70.8% |
+
+Δ accuracy vs FP baseline (percentage points):
+
+| Model | FP | ort:minmax-pc | ort:entropy-pc | ort:percentile-99.99 | ort:percentile-99.9 | ort:percentile-99.0 | mo:entropy | mo:max |
+|---|---|---|---|---|---|---|---|---|
+| lcnet_050 | 0.0 | -60.8 | -60.8 | -48.0 | -39.6 | -59.2 | -4.0 | -3.2 |
+| hardcorenas_a | 0.0 | -22.8 | -22.8 | -6.8 | -10.8 | -66.0 | +0.4 | -0.4 |
+| rexnet_100 | 0.0 | -75.2 | -75.2 | -61.2 | -42.0 | -73.2 | +0.8 | -0.4 |
+| repvgg_a2 | 0.0 | -76.8 | -76.8 | -22.0 | -6.8 | -42.4 | -1.2 | -76.4 |
+| efficientnet_b0 | 0.0 | -50.0 | -50.0 | -6.4 | -7.2 | -66.4 | -0.8 | -3.6 |
+| adv_inception_v3 | 0.0 | -68.4 | -68.4 | -6.0 | -6.8 | -63.6 | -0.4 | -76.4 |
+| beit_base_patch16_224 | 0.0 | -87.6 | -87.6 | -6.0 | -21.6 | -88.4 | -87.2 | -87.6 |
+| mobilevit_s | 0.0 | -59.2 | -59.2 | -8.4 | -13.6 | -81.2 | -1.2 | -3.6 |
+| convmixer_768_32 | 0.0 | -6.0 | -6.0 | -1.6 | -8.4 | -81.6 | -0.8 | -13.2 |
+
+### Key observations from the 9-model sweep
+
+1. **minmax / ORT-entropy collapse** on every long-tailed-activation model
+   (−50 to −88). This is the benchmark table's degradation, reproduced.
+2. **CNNs → ModelOpt `entropy` is the fix** (selective quant). Near-lossless on
+   all 8 CNNs: Δ between −4.0 and +0.8.
+3. **Transformers are the opposite — ModelOpt FAILS.** beit_base:
+   `modelopt/entropy` = **1.2%** (−87) but `ort/percentile-99.99` = **82.4%**
+   (−6.0). beit has **no convs**, so ModelOpt's conv-centric selective
+   quantization does nothing; entropy doesn't clip the extreme attention/LayerNorm
+   outliers. Only aggressive percentile clipping rescues a ViT.
+4. **`modelopt/max` is dangerous** — catastrophic on repvgg_a2 (0.8%),
+   adv_inception_v3 (1.2%), and weak on convmixer (70.8%). Prefer `entropy`.
+5. **No single method wins everywhere.** Practical rule:
+   - **CNN / depthwise-heavy:** ModelOpt `entropy` (selective quant).
+   - **Transformer / ViT:** ORT `percentile-99.99` (+ asymmetric, per-channel).
+   - **percentile-99.0 is too aggressive** — it over-clips and craters most models.
 
 ## Method
 

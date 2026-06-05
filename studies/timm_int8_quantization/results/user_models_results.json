@@ -372,7 +372,66 @@
     }
   },
   "beit_base_patch16_224": {
-    "error": "Failed to decompose the FX graph for ONNX compatibility. \u001b[96mThis is step 2/3\u001b[0m of exporting the model to ONNX. Next steps:\n- Create an issue in the PyTorch GitHub repository against the \u001b[96m*torch.export*\u001b[0m component and attach the full error stack as well as reproduction scripts.\n- Create an error report with `torch.onnx.export(..., report=True)`, and save the ExportedProgram as a pt2 file. Create an issue in the PyTorch GitHub repository against the \u001b[96m*onnx*\u001b[0m component. Attach the error report and the pt2 model.\n\n## Exception summary\n\n<class 'ValueError'>: Cannot view a tensor with shape torch.Size([s77, 197, 12, 64]) and strides (151296, 64, 12608, 1) as a tensor with shape (s77, 197, 768)!\n\nWhile executing %view_4 : [num_users=1] = call_function[target=torch.ops.aten.view.default](args = (%transpose_1, [%sym_size_int_2, 197, 768]), kwargs = {})\nOriginal traceback:\nFile \"/usr/local/lib/python3.11/dist-packages/timm/models/beit.py\", line 826, in forward\n    x = self.forward_features(x)\n  File \"/usr/local/lib/python3.11/dist-packages/timm/models/beit.py\", line 388, in forward\n    x = x + self.drop_path1(self.gamma_1 * self.attn(self.norm1(x), shared_rel_pos_bias=shared_rel_pos_bias))\n  File \"/usr/local/lib/python3.11/dist-packages/timm/models/beit.py\", line 249, in forward\n    x = x.transpose(1, 2).reshape(B, N, C)\nUse tlparse to see full graph. (https://github.com/pytorch/tlparse?tab=readme-ov-file#tlparse-parse-structured-pt2-logs)\n\n(Refer to the full stack trace above for more information.)"
+    "fp_top1": 0.884,
+    "fp_ms_per_img": 371.49,
+    "methods": {
+      "ort/minmax-pc": {
+        "top1": 0.008,
+        "delta_acc": -0.876,
+        "agreement": 0.008,
+        "cosine": 0.0309,
+        "quant_s": 52.4,
+        "has_naninf": false
+      },
+      "ort/entropy-pc": {
+        "top1": 0.008,
+        "delta_acc": -0.876,
+        "agreement": 0.008,
+        "cosine": 0.0309,
+        "quant_s": 70.8,
+        "has_naninf": false
+      },
+      "ort/percentile-99.99": {
+        "top1": 0.824,
+        "delta_acc": -0.06,
+        "agreement": 0.844,
+        "cosine": 0.7814,
+        "quant_s": 82.0,
+        "has_naninf": false
+      },
+      "ort/percentile-99.9": {
+        "top1": 0.668,
+        "delta_acc": -0.216,
+        "agreement": 0.66,
+        "cosine": 0.6053,
+        "quant_s": 57.8,
+        "has_naninf": false
+      },
+      "ort/percentile-99.0": {
+        "top1": 0.0,
+        "delta_acc": -0.884,
+        "agreement": 0.004,
+        "cosine": 0.0668,
+        "quant_s": 57.8,
+        "has_naninf": false
+      },
+      "modelopt/entropy": {
+        "top1": 0.012,
+        "delta_acc": -0.872,
+        "agreement": 0.012,
+        "cosine": 0.0644,
+        "quant_s": 61.7,
+        "has_naninf": false
+      },
+      "modelopt/max": {
+        "top1": 0.008,
+        "delta_acc": -0.876,
+        "agreement": 0.008,
+        "cosine": 0.0571,
+        "quant_s": 47.5,
+        "has_naninf": false
+      }
+    }
   },
   "mobilevit_s": {
     "fp_top1": 0.812,

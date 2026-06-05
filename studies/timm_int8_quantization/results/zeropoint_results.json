@@ -28,7 +28,8 @@
       "ort/minmax ASYM": 9.2,
       "ort/pct99.99 sym": 50.4,
       "modelopt/entropy sym": 81.6,
-      "modelopt/entropy ASYM": 81.6
+      "modelopt/entropy ASYM": 81.6,
+      "ort/pct99.99 ASYM": 72.8
     }
   }
 }

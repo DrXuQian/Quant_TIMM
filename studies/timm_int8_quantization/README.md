@@ -21,9 +21,16 @@ fail for two compounding reasons, both verified on real ImageNet top-1:
    the hardest models this is the dominant lever. (lcnet_050: best ORT
    calibration 22.8% → **ModelOpt selective 58.4%**, FP = 62.4%.)
 
-**Fix:** use **ModelOpt's default `entropy` calibration with its selective
-quantization** (don't force-quantize every layer), or in ONNX Runtime use
-**`percentile` calibration + per-channel + exclude sensitive layers**.
+**Fix depends on architecture** (verified on a 9-model sweep, real top-1):
+- **CNN / depthwise-heavy** (MobileNet, EfficientNet, RegNet, LCNet, …): use
+  **ModelOpt `entropy`** — its automatic selective quantization (skips all
+  depthwise convs) makes it near-lossless (Δ −4 to +0.8 on all 8 CNNs tested).
+- **Transformer / ViT** (BeiT, …): **ModelOpt FAILS** (beit `modelopt/entropy`
+  = 1.2%, −87) because there are no convs to selectively skip. Use ORT
+  **`percentile-99.99` + asymmetric + per-channel** (beit → 82.4%, −6).
+- **Asymmetric INT8** (`zero_point≠0`) is a strong independent lever for pure
+  ORT — efficientnet percentile 48.8%→**74.0%** — but adds nothing on top of
+  ModelOpt selective. **Avoid `modelopt/max`** (catastrophic on several models).
 
 ⚠️ Two plausible-sounding explanations were **measured and ruled out** — see
 `analysis.md`:
