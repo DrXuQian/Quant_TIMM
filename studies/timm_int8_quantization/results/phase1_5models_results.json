@@ -1,0 +1,327 @@
+{
+  "regnetx_002": {
+    "fp_top1": 0.664,
+    "fp_ms_per_img": 2.95,
+    "methods": {
+      "modelopt/entropy-fp16": {
+        "top1": 0.364,
+        "delta_acc": -0.3,
+        "agreement": 0.412,
+        "cosine": 0.7816,
+        "quant_s": 11.2,
+        "has_naninf": false
+      },
+      "modelopt/entropy-fp32": {
+        "top1": 0.668,
+        "delta_acc": 0.004,
+        "agreement": 0.896,
+        "cosine": 0.9933,
+        "quant_s": 10.8,
+        "has_naninf": false
+      },
+      "modelopt/entropy-bf16": {
+        "error": "[ONNXRuntimeError] : 9 : NOT_IMPLEMENTED : Could not find an implementation for QuantizeLinear(21) node with name 'input_QuantizeLinear'"
+      },
+      "modelopt/max-fp16": {
+        "top1": 0.352,
+        "delta_acc": -0.312,
+        "agreement": 0.404,
+        "cosine": 0.7222,
+        "quant_s": 5.8,
+        "has_naninf": false
+      },
+      "modelopt/max-fp32": {
+        "top1": 0.676,
+        "delta_acc": 0.012,
+        "agreement": 0.928,
+        "cosine": 0.9911,
+        "quant_s": 5.6,
+        "has_naninf": false
+      },
+      "ort/minmax-pc": {
+        "top1": 0.672,
+        "delta_acc": 0.008,
+        "agreement": 0.868,
+        "cosine": 0.9818,
+        "quant_s": 4.8,
+        "has_naninf": false
+      },
+      "ort/entropy-pc": {
+        "top1": 0.676,
+        "delta_acc": 0.012,
+        "agreement": 0.864,
+        "cosine": 0.9818,
+        "quant_s": 13.3,
+        "has_naninf": false
+      },
+      "ort/percentile-pc": {
+        "top1": 0.668,
+        "delta_acc": 0.004,
+        "agreement": 0.892,
+        "cosine": 0.9886,
+        "quant_s": 13.6,
+        "has_naninf": false
+      }
+    }
+  },
+  "mobilenetv2_100": {
+    "fp_top1": 0.728,
+    "fp_ms_per_img": 4.22,
+    "methods": {
+      "modelopt/entropy-fp16": {
+        "top1": 0.352,
+        "delta_acc": -0.376,
+        "agreement": 0.396,
+        "cosine": 0.5479,
+        "quant_s": 17.0,
+        "has_naninf": false
+      },
+      "modelopt/entropy-fp32": {
+        "top1": 0.716,
+        "delta_acc": -0.012,
+        "agreement": 0.956,
+        "cosine": 0.9941,
+        "quant_s": 16.3,
+        "has_naninf": false
+      },
+      "modelopt/entropy-bf16": {
+        "error": "[ONNXRuntimeError] : 9 : NOT_IMPLEMENTED : Could not find an implementation for QuantizeLinear(21) node with name 'blocks.0.0.conv_pw.weight_QuantizeLinear'"
+      },
+      "modelopt/max-fp16": {
+        "top1": 0.072,
+        "delta_acc": -0.656,
+        "agreement": 0.08,
+        "cosine": 0.244,
+        "quant_s": 7.1,
+        "has_naninf": false
+      },
+      "modelopt/max-fp32": {
+        "top1": 0.716,
+        "delta_acc": -0.012,
+        "agreement": 0.956,
+        "cosine": 0.995,
+        "quant_s": 6.5,
+        "has_naninf": false
+      },
+      "ort/minmax-pc": {
+        "top1": 0.688,
+        "delta_acc": -0.04,
+        "agreement": 0.824,
+        "cosine": 0.9295,
+        "quant_s": 6.4,
+        "has_naninf": false
+      },
+      "ort/entropy-pc": {
+        "top1": 0.688,
+        "delta_acc": -0.04,
+        "agreement": 0.824,
+        "cosine": 0.9294,
+        "quant_s": 61.7,
+        "has_naninf": false
+      },
+      "ort/percentile-pc": {
+        "top1": 0.712,
+        "delta_acc": -0.016,
+        "agreement": 0.92,
+        "cosine": 0.9714,
+        "quant_s": 43.3,
+        "has_naninf": false
+      }
+    }
+  },
+  "mobilenetv3_large_100": {
+    "fp_top1": 0.744,
+    "fp_ms_per_img": 3.72,
+    "methods": {
+      "modelopt/entropy-fp16": {
+        "top1": 0.688,
+        "delta_acc": -0.056,
+        "agreement": 0.824,
+        "cosine": 0.847,
+        "quant_s": 16.4,
+        "has_naninf": false
+      },
+      "modelopt/entropy-fp32": {
+        "top1": 0.736,
+        "delta_acc": -0.008,
+        "agreement": 0.948,
+        "cosine": 0.9708,
+        "quant_s": 15.6,
+        "has_naninf": false
+      },
+      "modelopt/entropy-bf16": {
+        "error": "[ONNXRuntimeError] : 9 : NOT_IMPLEMENTED : Could not find an implementation for QuantizeLinear(21) node with name 'blocks.0.0.conv_pw.weight_QuantizeLinear'"
+      },
+      "modelopt/max-fp16": {
+        "top1": 0.52,
+        "delta_acc": -0.224,
+        "agreement": 0.616,
+        "cosine": 0.5877,
+        "quant_s": 8.2,
+        "has_naninf": false
+      },
+      "modelopt/max-fp32": {
+        "top1": 0.74,
+        "delta_acc": -0.004,
+        "agreement": 0.936,
+        "cosine": 0.9762,
+        "quant_s": 7.5,
+        "has_naninf": false
+      },
+      "ort/minmax-pc": {
+        "top1": 0.672,
+        "delta_acc": -0.072,
+        "agreement": 0.796,
+        "cosine": 0.8376,
+        "quant_s": 6.5,
+        "has_naninf": false
+      },
+      "ort/entropy-pc": {
+        "top1": 0.672,
+        "delta_acc": -0.072,
+        "agreement": 0.796,
+        "cosine": 0.8377,
+        "quant_s": 26.6,
+        "has_naninf": false
+      },
+      "ort/percentile-pc": {
+        "top1": 0.736,
+        "delta_acc": -0.008,
+        "agreement": 0.848,
+        "cosine": 0.91,
+        "quant_s": 29.7,
+        "has_naninf": false
+      }
+    }
+  },
+  "efficientnet_b0": {
+    "fp_top1": 0.768,
+    "fp_ms_per_img": 6.07,
+    "methods": {
+      "modelopt/entropy-fp16": {
+        "top1": 0.712,
+        "delta_acc": -0.056,
+        "agreement": 0.8,
+        "cosine": 0.7969,
+        "quant_s": 25.1,
+        "has_naninf": false
+      },
+      "modelopt/entropy-fp32": {
+        "top1": 0.76,
+        "delta_acc": -0.008,
+        "agreement": 0.94,
+        "cosine": 0.9676,
+        "quant_s": 22.4,
+        "has_naninf": false
+      },
+      "modelopt/entropy-bf16": {
+        "error": "[ONNXRuntimeError] : 9 : NOT_IMPLEMENTED : Could not find an implementation for QuantizeLinear(21) node with name 'blocks.0.0.conv_pw.weight_QuantizeLinear'"
+      },
+      "modelopt/max-fp16": {
+        "top1": 0.512,
+        "delta_acc": -0.256,
+        "agreement": 0.54,
+        "cosine": 0.4984,
+        "quant_s": 10.3,
+        "has_naninf": false
+      },
+      "modelopt/max-fp32": {
+        "top1": 0.732,
+        "delta_acc": -0.036,
+        "agreement": 0.88,
+        "cosine": 0.9111,
+        "quant_s": 8.4,
+        "has_naninf": false
+      },
+      "ort/minmax-pc": {
+        "top1": 0.268,
+        "delta_acc": -0.5,
+        "agreement": 0.292,
+        "cosine": 0.3255,
+        "quant_s": 8.0,
+        "has_naninf": false
+      },
+      "ort/entropy-pc": {
+        "top1": 0.268,
+        "delta_acc": -0.5,
+        "agreement": 0.292,
+        "cosine": 0.3255,
+        "quant_s": 41.9,
+        "has_naninf": false
+      },
+      "ort/percentile-pc": {
+        "top1": 0.704,
+        "delta_acc": -0.064,
+        "agreement": 0.816,
+        "cosine": 0.8711,
+        "quant_s": 45.5,
+        "has_naninf": false
+      }
+    }
+  },
+  "ssl_resnet18": {
+    "fp_top1": 0.716,
+    "fp_ms_per_img": 7.71,
+    "methods": {
+      "modelopt/entropy-fp16": {
+        "top1": 0.0,
+        "delta_acc": -0.716,
+        "agreement": 0.0,
+        "cosine": 0.0735,
+        "quant_s": 17.3,
+        "has_naninf": false
+      },
+      "modelopt/entropy-fp32": {
+        "top1": 0.688,
+        "delta_acc": -0.028,
+        "agreement": 0.928,
+        "cosine": 0.9905,
+        "quant_s": 17.0,
+        "has_naninf": false
+      },
+      "modelopt/entropy-bf16": {
+        "error": "[ONNXRuntimeError] : 9 : NOT_IMPLEMENTED : Could not find an implementation for QuantizeLinear(21) node with name 'conv1.weight_QuantizeLinear'"
+      },
+      "modelopt/max-fp16": {
+        "top1": 0.0,
+        "delta_acc": -0.716,
+        "agreement": 0.0,
+        "cosine": 0.0437,
+        "quant_s": 9.8,
+        "has_naninf": false
+      },
+      "modelopt/max-fp32": {
+        "top1": 0.716,
+        "delta_acc": 0.0,
+        "agreement": 0.904,
+        "cosine": 0.9912,
+        "quant_s": 9.4,
+        "has_naninf": false
+      },
+      "ort/minmax-pc": {
+        "top1": 0.74,
+        "delta_acc": 0.024,
+        "agreement": 0.908,
+        "cosine": 0.9863,
+        "quant_s": 6.3,
+        "has_naninf": false
+      },
+      "ort/entropy-pc": {
+        "top1": 0.74,
+        "delta_acc": 0.024,
+        "agreement": 0.908,
+        "cosine": 0.9863,
+        "quant_s": 15.2,
+        "has_naninf": false
+      },
+      "ort/percentile-pc": {
+        "top1": 0.716,
+        "delta_acc": 0.0,
+        "agreement": 0.936,
+        "cosine": 0.9939,
+        "quant_s": 15.8,
+        "has_naninf": false
+      }
+    }
+  }
+}

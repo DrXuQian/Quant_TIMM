@@ -7,15 +7,15 @@ import sys
 RESULTS = sys.argv[1] if len(sys.argv) > 1 else "results/experiment_results.json"
 ANALYSIS = os.path.join(os.path.dirname(__file__), "analysis.md")
 
-# Columns we show (skip bf16: not CPU-evaluable)
+# Columns we show (all FP32-scale QDQ, CPU-faithful)
 METHODS = [
-    "modelopt/entropy-fp16",
-    "modelopt/entropy-fp32",
-    "modelopt/max-fp16",
-    "modelopt/max-fp32",
     "ort/minmax-pc",
     "ort/entropy-pc",
-    "ort/percentile-pc",
+    "ort/percentile-99.99",
+    "ort/percentile-99.9",
+    "ort/percentile-99.0",
+    "modelopt/entropy",
+    "modelopt/max",
 ]
 
 

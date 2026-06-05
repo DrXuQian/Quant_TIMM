@@ -36,18 +36,25 @@ ort.set_default_logger_severity(3)
 ONNX_DIR = "onnx_models"
 QUANT_DIR = "quantized_models"
 
-# (label, backend, method, per_channel, high_precision_dtype)
-# high_precision_dtype only matters for the modelopt backend (dtype of the
-# non-INT8 part of the graph). It is the single biggest accuracy lever.
+# (label, backend, method, per_channel, high_precision_dtype, percentile)
+#
+# All methods here produce FP32-scale QDQ graphs that the onnxruntime CPU EP
+# executes correctly, so the measured accuracy is faithful. We deliberately do
+# NOT include modelopt high_precision_dtype=fp16/bf16 variants: the CPU EP cannot
+# execute FP16-scale QDQ (gives garbage / NOT_IMPLEMENTED), which is an evaluation
+# artifact, not a real accuracy loss (verified by casting such a model back to
+# fp32 -> accuracy fully recovers). Those must be validated on GPU/TensorRT.
+#
+# The real, CPU-faithful lever for these models is the ACTIVATION calibration
+# method (minmax vs entropy vs percentile) plus selective quantization.
 EXPERIMENTS = [
-    ("modelopt/entropy-fp16", "modelopt", "entropy", True, "fp16"),   # ModelOpt default
-    ("modelopt/entropy-fp32", "modelopt", "entropy", True, "fp32"),
-    ("modelopt/entropy-bf16", "modelopt", "entropy", True, "bf16"),
-    ("modelopt/max-fp16", "modelopt", "max", True, "fp16"),
-    ("modelopt/max-fp32", "modelopt", "max", True, "fp32"),
-    ("ort/minmax-pc", "ort", "minmax", True, "fp32"),
-    ("ort/entropy-pc", "ort", "entropy", True, "fp32"),
-    ("ort/percentile-pc", "ort", "percentile", True, "fp32"),
+    ("ort/minmax-pc", "ort", "minmax", True, "fp32", 99.99),       # baseline (≈ORT/Holmes default)
+    ("ort/entropy-pc", "ort", "entropy", True, "fp32", 99.99),
+    ("ort/percentile-99.99", "ort", "percentile", True, "fp32", 99.99),
+    ("ort/percentile-99.9", "ort", "percentile", True, "fp32", 99.9),
+    ("ort/percentile-99.0", "ort", "percentile", True, "fp32", 99.0),
+    ("modelopt/entropy", "modelopt", "entropy", True, "fp32", 99.99),  # selective + entropy
+    ("modelopt/max", "modelopt", "max", True, "fp32", 99.99),
 ]
 
 
@@ -139,7 +146,7 @@ def worker_main(args):
         }
         extra = {}
         if args.method == "percentile":
-            extra["CalibPercentile"] = 99.99
+            extra["CalibPercentile"] = args.percentile
         quantize_static(
             model_input=onnx_path,
             model_output=out_path,
@@ -154,12 +161,12 @@ def worker_main(args):
 
 
 def spawn_quantize(model_name, onnx_path, out_path, backend, method, per_channel,
-                   calib, high_precision):
+                   calib, high_precision, percentile):
     cmd = [
         sys.executable, os.path.abspath(__file__), "--worker",
         "--onnx", onnx_path, "--out", out_path, "--model", model_name,
         "--backend", backend, "--method", method, "--calib", str(calib),
-        "--high-precision", high_precision,
+        "--high-precision", high_precision, "--percentile", str(percentile),
     ]
     if per_channel:
         cmd.append("--per-channel")
@@ -225,13 +232,13 @@ def run_model(model_name, calib_count, eval_count):
                "methods": {}}
     os.makedirs(QUANT_DIR, exist_ok=True)
 
-    for label, backend, method, per_channel, high_precision in EXPERIMENTS:
+    for label, backend, method, per_channel, high_precision, percentile in EXPERIMENTS:
         safe = label.replace("/", "_")
         out_path = os.path.join(QUANT_DIR, f"{model_name}_{safe}.onnx")
         try:
             t0 = time.time()
             spawn_quantize(model_name, onnx_path, out_path, backend, method,
-                           per_channel, calib_count, high_precision)
+                           per_channel, calib_count, high_precision, percentile)
             qnt_s = time.time() - t0
 
             q_logits, _ = run_session_predictions(out_path, eval_reader)
@@ -260,7 +267,8 @@ def main():
     ap.add_argument("--onnx"); ap.add_argument("--out"); ap.add_argument("--model")
     ap.add_argument("--backend"); ap.add_argument("--method")
     ap.add_argument("--per-channel", action="store_true")
-    ap.add_argument("--high-precision", default="fp16")
+    ap.add_argument("--high-precision", default="fp32")
+    ap.add_argument("--percentile", type=float, default=99.99)
     ap.add_argument("--models", nargs="+")
     ap.add_argument("--calib", type=int, default=150)
     ap.add_argument("--eval", type=int, default=250)

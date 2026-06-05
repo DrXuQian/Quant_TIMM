@@ -8,24 +8,30 @@ labels (not synthetic data).
 
 ## TL;DR — Root Cause
 
-For the worst-degrading models (depthwise / grouped convolutions: MobileNet,
-EfficientNet, RegNet, FBNet, …) the accuracy collapse is **not caused by INT8
-quantization or the calibration method**. It is caused by ModelOpt's default of
-casting the **non-quantized part of the graph to FP16**
-(`high_precision_dtype="fp16"`). These architectures contain many very small
-weights (depthwise kernels, folded BatchNorm scales) that **underflow in FP16**.
+Models that collapse under INT8 (EfficientNet, BeiT, MobileViT, RexNet, LCNet,
+HardCoReNAS, … — anything with **swish / GELU / SE / long-tailed activations**)
+fail for two compounding reasons, both verified on real ImageNet top-1:
 
-| Setting | regnetx_002 top-1 |
-|---|---|
-| FP baseline | 66.4% |
-| ModelOpt INT8, `high_precision_dtype=fp16` (**default**) | **36.4%** |
-| ModelOpt INT8, `high_precision_dtype=fp32` | 66.8% |
-| ModelOpt INT8, `high_precision_dtype=bf16` | see results |
-| ONNX Runtime INT8 (minmax / entropy / percentile) | 67.2% |
+1. **min/max activation calibration** sets the INT8 range to an outlier
+   activation, crushing the dense bulk of values into a few codes. Switching to
+   **percentile/entropy** calibration recovers a lot. (efficientnet_b0:
+   minmax 26.8% → percentile-99.99 70.4%, FP = 76.8%.)
+2. **Quantizing every layer.** ModelOpt's default does **selective** quantization
+   (skips the most sensitive layers); plain ORT/Holmes quantize everything. For
+   the hardest models this is the dominant lever. (lcnet_050: best ORT
+   calibration 22.8% → **ModelOpt selective 58.4%**, FP = 62.4%.)
 
-**Fix:** quantize with `high_precision_dtype="bf16"` (same exponent range as
-FP32, so no underflow; half the bytes of FP32) or `"fp32"`. The INT8 weights are
-unaffected — only the precision of the *fallback* (non-quantized) ops changes.
+**Fix:** use **ModelOpt's default `entropy` calibration with its selective
+quantization** (don't force-quantize every layer), or in ONNX Runtime use
+**`percentile` calibration + per-channel + exclude sensitive layers**.
+
+⚠️ Two plausible-sounding explanations were **measured and ruled out** — see
+`analysis.md`:
+- "tiny weights underflow in FP16" — disproved: pure-FP16 model is fine (66.0%).
+- "ModelOpt `high_precision_dtype=fp16` is the bug" — that catastrophe is an
+  onnxruntime **CPU-EP artifact** (can't run FP16-scale QDQ); casting back to
+  FP32 fully recovers accuracy. FP16/BF16 deployment variants must be validated
+  on GPU/TensorRT, not the CPU EP.
 
 ## Files
 
@@ -51,10 +57,13 @@ pip install timm torch torchvision onnx onnxruntime nvidia-modelopt[onnx]
 # (any ImageNet-1k val subset with standard synset label ordering works)
 
 python run_experiment.py \
-    --models regnetx_002 mobilenetv2_100 mobilenetv3_large_100 \
-             efficientnet_b0 ssl_resnet18 \
+    --models efficientnet_b0 lcnet_050 hardcorenas_a rexnet_100 mobilevit_s \
     --calib 150 --eval 250 --output results/experiment_results.json
 ```
+
+Each model is quantized with: `ort/minmax`, `ort/entropy`,
+`ort/percentile-{99.99,99.9,99.0}`, `modelopt/entropy`, `modelopt/max` — all
+FP32-scale QDQ (CPU-faithful). Compare the `top1` / `Δacc` columns per method.
 
 ## Metrics
 
