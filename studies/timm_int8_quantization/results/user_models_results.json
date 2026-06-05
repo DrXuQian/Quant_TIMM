@@ -370,5 +370,47 @@
         "has_naninf": false
       }
     }
+  },
+  "mobilevit_s": {
+    "fp_top1": 0.776,
+    "fp_ms_per_img": 22.49,
+    "methods": {
+      "ort/minmax-pc": {
+        "top1": 0.104,
+        "delta_acc": -0.672,
+        "agreement": 0.108,
+        "cosine": -0.0657,
+        "quant_s": 17.0,
+        "has_naninf": false
+      },
+      "ort/entropy-pc": {
+        "error": "WARNING:root:Please consider to run pre-processing before quantization. Refer to example: https://github.com/microsoft/onnxruntime-inference-examples/blob/main/quantization/image_classification/cpu/Re"
+      },
+      "ort/percentile-99.99": {
+        "error": "WARNING:root:Please consider to run pre-processing before quantization. Refer to example: https://github.com/microsoft/onnxruntime-inference-examples/blob/main/quantization/image_classification/cpu/Re"
+      },
+      "ort/percentile-99.9": {
+        "error": "WARNING:root:Please consider to run pre-processing before quantization. Refer to example: https://github.com/microsoft/onnxruntime-inference-examples/blob/main/quantization/image_classification/cpu/Re"
+      },
+      "ort/percentile-99.0": {
+        "error": "WARNING:root:Please consider to run pre-processing before quantization. Refer to example: https://github.com/microsoft/onnxruntime-inference-examples/blob/main/quantization/image_classification/cpu/Re"
+      },
+      "modelopt/entropy": {
+        "top1": 0.796,
+        "delta_acc": 0.02,
+        "agreement": 0.916,
+        "cosine": 0.9645,
+        "quant_s": 71.7,
+        "has_naninf": false
+      },
+      "modelopt/max": {
+        "top1": 0.772,
+        "delta_acc": -0.004,
+        "agreement": 0.876,
+        "cosine": 0.9,
+        "quant_s": 23.0,
+        "has_naninf": false
+      }
+    }
   }
 }
