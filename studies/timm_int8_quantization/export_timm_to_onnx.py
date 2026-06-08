@@ -71,15 +71,22 @@ def export_model(model_name: str, output_dir: str, opset: int = 17):
     input_size = model.default_cfg.get("input_size", (3, 224, 224))
     dummy_input = torch.randn(1, *input_size)
 
-    torch.onnx.export(
-        model,
-        dummy_input,
-        output_path,
-        opset_version=opset,
-        input_names=["input"],
-        output_names=["output"],
-        dynamic_axes={"input": {0: "batch_size"}, "output": {0: "batch_size"}},
-    )
+    # Prefer the legacy TorchScript exporter (dynamo=False): the torch 2.x dynamo
+    # exporter fails to decompose some graphs (e.g. beit attention). Fall back to
+    # the plain call on older torch that doesn't accept the `dynamo` kwarg.
+    try:
+        torch.onnx.export(
+            model, dummy_input, output_path, opset_version=opset,
+            input_names=["input"], output_names=["output"],
+            dynamic_axes={"input": {0: "batch_size"}, "output": {0: "batch_size"}},
+            dynamo=False,
+        )
+    except Exception:
+        torch.onnx.export(
+            model, dummy_input, output_path, opset_version=opset,
+            input_names=["input"], output_names=["output"],
+            dynamic_axes={"input": {0: "batch_size"}, "output": {0: "batch_size"}},
+        )
     print(f"  [done] {output_path}")
     return output_path
 
