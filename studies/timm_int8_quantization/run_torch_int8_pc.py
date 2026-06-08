@@ -1,31 +1,24 @@
 #!/usr/bin/env python3
-"""INT8 per-channel activation quantization via modelopt.torch on timm models.
+"""INT8 quantization with per-channel activation on depthwise convolutions.
 
-Replicates the 'int8_pc' strategy: per-channel input activation (axis=1 NCHW)
-+ per-channel weights (axis=0) + max calibration.
+Strategy:
+  - Depthwise Conv2d: per-channel activation (axis=1) + per-channel weight (axis=0)
+  - Regular Conv2d:   per-tensor activation (axis=None) + per-channel weight (axis=0)
+  - Linear:           per-tensor activation (axis=None) + per-channel weight (axis=0)
 
-Data sources (pick one):
-  A) Local dirs with labels.json  (default, from download_imagenet_val.py or
-     prepare_ilsvrc_data.py):
-       --calib-dir imagenet_calib  --eval-dir imagenet_val
-  B) HuggingFace streaming (no local download needed):
-       --hf-dataset ILSVRC/imagenet-1k
+Per-channel activation only benefits depthwise conv (each channel computed
+independently). Regular conv mixes all input channels so per-channel activation
+is unnecessary and breaks some backends (e.g. Holmes).
 
-Uses DataLoader with multiple workers for fast data loading.
+Data sources:
+  A) Local dirs:       --calib-dir imagenet_calib  --eval-dir imagenet_val
+  B) HuggingFace:      --hf-dataset ILSVRC/imagenet-1k
 
 Usage:
-    # Local data
-    python run_torch_int8_pc.py --models efficientnet_b0
-    python run_torch_int8_pc.py --device cuda --batch-size 256
-
-    # HuggingFace streaming (requires: pip install datasets, HF auth)
-    python run_torch_int8_pc.py --hf-dataset ILSVRC/imagenet-1k --models efficientnet_b0
-
-    # Per-channel percentile calibration (for hard models like convmixer)
+    python run_torch_int8_pc.py --models efficientnet_b0 --device cuda
     python run_torch_int8_pc.py --models convmixer_768_32 --calibrator percentile --percentile 99.9
-
-    # ONNX export
-    python run_torch_int8_pc.py --models efficientnet_b0 --export-onnx
+    python run_torch_int8_pc.py --hf-dataset ILSVRC/imagenet-1k --models efficientnet_b0
+    python run_torch_int8_pc.py --models efficientnet_b0 --act-mode per-tensor  # no DW per-channel
 """
 
 import argparse
@@ -64,11 +57,9 @@ EVAL_DIR = "imagenet_val"
 
 
 # --------------------------------------------------------------------------- #
-# Dataset: local files
+# Dataset
 # --------------------------------------------------------------------------- #
 class ImageLabelDataset(Dataset):
-    """Dataset that reads (filepath, label) pairs and applies a transform."""
-
     def __init__(self, items, transform):
         self.items = items
         self.transform = transform
@@ -79,22 +70,15 @@ class ImageLabelDataset(Dataset):
     def __getitem__(self, idx):
         path, label = self.items[idx]
         img = Image.open(path).convert("RGB")
-        tensor = self.transform(img)
-        return tensor, label
+        return self.transform(img), label
 
 
-# --------------------------------------------------------------------------- #
-# Dataset: HuggingFace streaming
-# --------------------------------------------------------------------------- #
 class HFImageNetDataset(Dataset):
-    """Wraps a HuggingFace ImageNet split loaded into memory."""
-
     def __init__(self, hf_dataset_id, split, transform, max_count=None):
         from datasets import load_dataset
         print(f"  Loading HF {hf_dataset_id} [{split}] ...", flush=True)
         ds = load_dataset(hf_dataset_id, split=split, streaming=True)
-        self.images = []
-        self.labels = []
+        self.images, self.labels = [], []
         for i, ex in enumerate(ds):
             if max_count and i >= max_count:
                 break
@@ -104,8 +88,7 @@ class HFImageNetDataset(Dataset):
             self.images.append(img)
             self.labels.append(int(ex["label"]))
             if (i + 1) % 5000 == 0:
-                total = f"/{max_count}" if max_count else ""
-                print(f"    loaded {i+1}{total} images", flush=True)
+                print(f"    loaded {i+1}/{max_count or '?'} images", flush=True)
         self.transform = transform
         print(f"  Loaded {len(self.images)} images from HF", flush=True)
 
@@ -117,14 +100,12 @@ class HFImageNetDataset(Dataset):
 
 
 def load_labels_json(data_dir):
-    """Load [(filepath, label), ...] from labels.json."""
     labels_json = os.path.join(data_dir, "labels.json")
     meta = json.load(open(labels_json))
     return [(os.path.join(data_dir, m["file"]), int(m["label"])) for m in meta]
 
 
 def get_transform(model_name):
-    """Get timm preprocessing transform for a model."""
     model_tmp = timm.create_model(model_name, pretrained=False)
     cfg = resolve_data_config(model_tmp.default_cfg)
     transform = create_transform(**cfg, is_training=False)
@@ -133,15 +114,54 @@ def get_transform(model_name):
 
 
 # --------------------------------------------------------------------------- #
+# Find depthwise conv layers
+# --------------------------------------------------------------------------- #
+def find_depthwise_conv_names(model):
+    """Return set of module names that are depthwise Conv2d (groups == in_channels > 1)."""
+    names = set()
+    for name, mod in model.named_modules():
+        if isinstance(mod, torch.nn.Conv2d) and mod.groups == mod.in_channels and mod.groups > 1:
+            names.add(name)
+    return names
+
+
+# --------------------------------------------------------------------------- #
 # Quantization config
 # --------------------------------------------------------------------------- #
-def build_int8_pc_config():
-    """INT8 config with per-channel activation quantization (axis=1 for NCHW)."""
+def build_int8_config(model, act_mode="dw-per-channel"):
+    """Build INT8 quantization config.
+
+    act_mode:
+      "dw-per-channel" — depthwise conv activation per-channel (axis=1),
+                          everything else per-tensor (default, best accuracy)
+      "per-channel"    — ALL activations per-channel (axis=1)
+                          (may break some backends)
+      "per-tensor"     — ALL activations per-tensor (axis=None)
+                          (most compatible, lower accuracy on DW-heavy models)
+    """
     cfg = copy.deepcopy(mtq.INT8_DEFAULT_CFG)
-    for entry in cfg["quant_cfg"]:
-        if entry.get("quantizer_name") == "*input_quantizer":
-            entry["cfg"]["axis"] = 1  # per-channel on C dimension (NCHW)
     cfg["algorithm"] = "max"
+
+    if act_mode == "per-channel":
+        # All input_quantizer → axis=1
+        for entry in cfg["quant_cfg"]:
+            if entry.get("quantizer_name") == "*input_quantizer":
+                entry["cfg"]["axis"] = 1
+
+    elif act_mode == "dw-per-channel":
+        # Default: per-tensor for all (axis=None already in INT8_DEFAULT_CFG)
+        # Then append per-name overrides for depthwise convs
+        dw_names = find_depthwise_conv_names(model)
+        for dw in dw_names:
+            cfg["quant_cfg"].append({
+                "quantizer_name": f"{dw}.input_quantizer",
+                "cfg": {"num_bits": 8, "axis": 1},
+            })
+        if dw_names:
+            print(f"  DW per-channel activation on {len(dw_names)} layers", flush=True)
+
+    # act_mode == "per-tensor": no changes needed (default is axis=None)
+
     return cfg
 
 
@@ -150,28 +170,26 @@ def build_int8_pc_config():
 # --------------------------------------------------------------------------- #
 def recalibrate_percentile(qmodel, calib_loader, device, percentile=99.9,
                            num_bins=2048):
-    """Replace input quantizers with per-channel percentile calibration.
+    """Re-calibrate input quantizers using per-channel percentile.
 
-    After initial max calibration, collects per-channel histograms and
-    recomputes amax using the given percentile. This clips outliers that
-    cause accuracy loss on hard-to-quantize models (e.g. convmixer).
-
-    NOTE: requires the patched HistogramCalibrator with per-channel support.
-    Falls back to a direct torch.quantile approach if the patch is absent.
+    Works on quantizers that have axis != None (i.e. depthwise conv input
+    quantizers when act_mode="dw-per-channel"). Per-tensor quantizers are
+    left unchanged.
     """
+    # Only re-calibrate per-channel quantizers (axis is not None)
     input_qs = [(n, q) for n, q in qmodel.named_modules()
                 if isinstance(q, TensorQuantizer) and "input" in n
-                and hasattr(q, "_amax")]
+                and hasattr(q, "_amax") and q.axis is not None]
     if not input_qs:
-        print("  [warn] no input quantizers found, skipping percentile recalib")
+        print("  [warn] no per-channel input quantizers found, skipping percentile")
         return
 
     orig_amaxes = {n: q._amax.data.clone() for n, q in input_qs}
 
-    # Try patched HistogramCalibrator first (monkey patch or source patch)
+    # Try patched HistogramCalibrator
     try:
         from modelopt.torch.quantization.calib.histogram import HistogramCalibrator
-        HistogramCalibrator(num_bits=8, axis=1, num_bins=16)  # test per-channel
+        HistogramCalibrator(num_bits=8, axis=1, num_bins=16)
         use_histogram = True
     except (NotImplementedError, TypeError):
         try:
@@ -183,7 +201,6 @@ def recalibrate_percentile(qmodel, calib_loader, device, percentile=99.9,
             use_histogram = False
 
     if use_histogram:
-        # Patched path: collect per-channel histograms, compute percentile amax
         for _, q in input_qs:
             q._calibrator = HistogramCalibrator(num_bits=8, axis=q.axis,
                                                 num_bins=num_bins)
@@ -205,13 +222,11 @@ def recalibrate_percentile(qmodel, calib_loader, device, percentile=99.9,
                 q._amax.data.copy_(orig_amaxes[n])
             q.disable_calib()
             q.enable_quant()
-        print(f"  Percentile {percentile} recalib: {replaced}/{len(input_qs)} "
-              f"quantizers (histogram path)", flush=True)
+        print(f"  Percentile {percentile}: {replaced}/{len(input_qs)} DW quantizers "
+              f"(histogram path)", flush=True)
     else:
-        # Fallback: collect raw activations and use torch.quantile directly
-        print("  [info] HistogramCalibrator per-channel not available, "
-              "using torch.quantile fallback", flush=True)
-        # Disable quantization, collect per-quantizer activations
+        # Fallback: torch.quantile
+        print("  [info] using torch.quantile fallback", flush=True)
         activations = {n: [] for n, _ in input_qs}
         hooks = []
 
@@ -223,7 +238,6 @@ def recalibrate_percentile(qmodel, calib_loader, device, percentile=99.9,
 
         for _, q in input_qs:
             q.disable_quant()
-        # Hook on parent modules to capture inputs
         parent_map = {}
         for n, q in input_qs:
             parent_name = n.rsplit(".", 1)[0]
@@ -253,8 +267,8 @@ def recalibrate_percentile(qmodel, calib_loader, device, percentile=99.9,
                 q._amax.data.copy_(pct_amax.reshape(shape).to(q._amax.device))
                 replaced += 1
             q.enable_quant()
-        print(f"  Percentile {percentile} recalib: {replaced}/{len(input_qs)} "
-              f"quantizers (torch.quantile fallback)", flush=True)
+        print(f"  Percentile {percentile}: {replaced}/{len(input_qs)} DW quantizers "
+              f"(torch.quantile fallback)", flush=True)
 
 
 # --------------------------------------------------------------------------- #
@@ -262,13 +276,10 @@ def recalibrate_percentile(qmodel, calib_loader, device, percentile=99.9,
 # --------------------------------------------------------------------------- #
 @torch.no_grad()
 def evaluate(model, loader, device):
-    """Evaluate model on a DataLoader, return top-1 accuracy."""
     model.eval()
-    correct = 0
-    total = 0
+    correct = total = 0
     for batch_t, batch_l in loader:
-        logits = model(batch_t.to(device))
-        preds = logits.argmax(dim=-1).cpu()
+        preds = model(batch_t.to(device)).argmax(dim=-1).cpu()
         correct += int((preds == batch_l).sum())
         total += batch_l.size(0)
         if total % 10000 < batch_t.size(0):
@@ -281,8 +292,9 @@ def evaluate(model, loader, device):
 # Per-model runner
 # --------------------------------------------------------------------------- #
 def run_single_model(model_name, calib_loader, eval_loader, device,
-                     calibrator="max", percentile=99.9,
-                     export_onnx=False, onnx_dir="onnx_models_torch_int8pc"):
+                     act_mode="dw-per-channel", calibrator="max",
+                     percentile=99.9, export_onnx=False,
+                     onnx_dir="onnx_models_torch_int8pc"):
     print(f"\n{'='*70}")
     print(f"  {model_name}")
     print(f"{'='*70}", flush=True)
@@ -293,11 +305,10 @@ def run_single_model(model_name, calib_loader, eval_loader, device,
     t0 = time.time()
     fp_acc = evaluate(model, eval_loader, device)
     fp_time = time.time() - t0
-    print(f"  FP32 top-1: {fp_acc*100:.2f}%  ({fp_time:.1f}s, "
-          f"{fp_time/len(eval_loader.dataset)*1000:.1f} ms/img)", flush=True)
+    print(f"  FP32 top-1: {fp_acc*100:.2f}%  ({fp_time:.1f}s)", flush=True)
 
-    # Quantize with max calibration first
-    config = build_int8_pc_config()
+    # Build config (inspects model for depthwise conv names)
+    config = build_int8_config(model, act_mode=act_mode)
 
     def forward_loop(m):
         with torch.no_grad():
@@ -309,32 +320,32 @@ def run_single_model(model_name, calib_loader, eval_loader, device,
     quant_time = time.time() - t0
     print(f"  Quantization (max): {quant_time:.1f}s", flush=True)
 
-    # Optional: re-calibrate with percentile
+    # Optional: percentile re-calibration (only affects DW per-channel quantizers)
     if calibrator == "percentile":
         recalibrate_percentile(qmodel, calib_loader, device,
                                percentile=percentile)
 
-    # INT8_PC evaluation
-    tag = f"INT8_PC({calibrator})" if calibrator != "max" else "INT8_PC"
+    # Evaluate
+    tag = f"INT8({act_mode},{calibrator})"
     t0 = time.time()
     q_acc = evaluate(qmodel, eval_loader, device)
     q_time = time.time() - t0
     delta = q_acc - fp_acc
-    print(f"  {tag} top-1: {q_acc*100:.2f}%  (Δ={delta*100:+.2f}%)  "
+    print(f"  {tag}: {q_acc*100:.2f}%  (Δ={delta*100:+.2f}%)  "
           f"({q_time:.1f}s)", flush=True)
 
     result = {
         "fp_top1": round(fp_acc, 4),
-        "int8_pc_top1": round(q_acc, 4),
+        "int8_top1": round(q_acc, 4),
         "delta": round(delta, 4),
+        "act_mode": act_mode,
+        "calibrator": calibrator,
         "quant_s": round(quant_time, 1),
-        "fp_eval_s": round(fp_time, 1),
-        "int8_eval_s": round(q_time, 1),
     }
 
     if export_onnx:
         os.makedirs(onnx_dir, exist_ok=True)
-        onnx_path = os.path.join(onnx_dir, f"{model_name}_int8pc.onnx")
+        onnx_path = os.path.join(onnx_dir, f"{model_name}_int8.onnx")
         input_size = model.default_cfg.get("input_size", (3, 224, 224))
         dummy = torch.randn(1, *input_size, device=device)
         try:
@@ -348,7 +359,6 @@ def run_single_model(model_name, calib_loader, eval_loader, device,
             result["onnx_path"] = onnx_path
         except Exception as e:
             print(f"  ONNX export FAILED: {e}")
-            result["onnx_export_error"] = str(e)[:200]
 
     del model, qmodel
     torch.cuda.empty_cache()
@@ -360,29 +370,29 @@ def run_single_model(model_name, calib_loader, eval_loader, device,
 # --------------------------------------------------------------------------- #
 def main():
     ap = argparse.ArgumentParser(
-        description="INT8 per-channel activation quantization on timm models")
+        description="INT8 quantization with per-channel activation on depthwise conv")
 
-    # Data source: local dirs OR HuggingFace
-    data = ap.add_argument_group("data source (pick local or HF)")
-    data.add_argument("--calib-dir", default=CALIB_DIR,
-                      help="local calibration dir with labels.json (default: imagenet_calib)")
-    data.add_argument("--eval-dir", default=EVAL_DIR,
-                      help="local evaluation dir with labels.json (default: imagenet_val)")
+    data = ap.add_argument_group("data source")
+    data.add_argument("--calib-dir", default=CALIB_DIR)
+    data.add_argument("--eval-dir", default=EVAL_DIR)
     data.add_argument("--hf-dataset", default=None,
-                      help="HuggingFace dataset id (e.g. ILSVRC/imagenet-1k). "
-                           "Overrides --calib-dir/--eval-dir. Requires: pip install datasets")
+                      help="HuggingFace dataset id (e.g. ILSVRC/imagenet-1k)")
 
     ap.add_argument("--models", nargs="+", default=MODELS)
     ap.add_argument("--calib-count", type=int, default=512)
-    ap.add_argument("--eval-count", type=int, default=None,
-                    help="eval images (default: all in eval-dir, or 50000 for HF)")
+    ap.add_argument("--eval-count", type=int, default=None)
     ap.add_argument("--batch-size", type=int, default=256)
     ap.add_argument("--num-workers", type=int, default=8)
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
-    ap.add_argument("--calibrator", choices=["max", "percentile"], default="max",
-                    help="activation calibrator: max (default) or percentile")
-    ap.add_argument("--percentile", type=float, default=99.9,
-                    help="percentile value when --calibrator=percentile (default: 99.9)")
+
+    ap.add_argument("--act-mode", choices=["dw-per-channel", "per-channel", "per-tensor"],
+                    default="dw-per-channel",
+                    help="activation quantization mode: "
+                         "dw-per-channel = per-channel only on depthwise conv (default), "
+                         "per-channel = all layers per-channel, "
+                         "per-tensor = all layers per-tensor")
+    ap.add_argument("--calibrator", choices=["max", "percentile"], default="max")
+    ap.add_argument("--percentile", type=float, default=99.9)
     ap.add_argument("--export-onnx", action="store_true")
     ap.add_argument("--output", default="results/torch_int8_pc_50k.json")
     ap.add_argument("--resume", action="store_true")
@@ -391,20 +401,14 @@ def main():
     device = torch.device(args.device)
     use_hf = args.hf_dataset is not None
 
-    calib_tag = f"HF:{args.hf_dataset}[train]" if use_hf else args.calib_dir
-    eval_tag = f"HF:{args.hf_dataset}[validation]" if use_hf else args.eval_dir
-    print(f"Calibration: {args.calib_count} from {calib_tag}")
-    eval_count = args.eval_count or (50000 if use_hf else None)
-    print(f"Evaluation:  {'all' if eval_count is None else eval_count} from {eval_tag}")
-    print(f"Device: {device}, batch={args.batch_size}, workers={args.num_workers}")
-    cal_desc = args.calibrator if args.calibrator == "max" else f"percentile({args.percentile})"
-    print(f"Strategy: INT8 per-channel activation (axis=1) + {cal_desc} calibration")
+    print(f"Strategy: act={args.act_mode}, calibrator={args.calibrator}"
+          + (f"({args.percentile})" if args.calibrator == "percentile" else ""))
 
     all_results = {}
     if args.resume and os.path.exists(args.output):
         all_results = json.load(open(args.output))
         done = [m for m in all_results if "fp_top1" in all_results[m]]
-        print(f"Resuming: {len(done)} models done, will skip")
+        print(f"Resuming: {len(done)} models done")
 
     os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
 
@@ -418,6 +422,7 @@ def main():
             transform = get_transform(model_name)
 
             if use_hf:
+                eval_count = args.eval_count or 50000
                 calib_ds = HFImageNetDataset(args.hf_dataset, "train", transform,
                                              max_count=args.calib_count)
                 eval_ds = HFImageNetDataset(args.hf_dataset, "validation", transform,
@@ -433,19 +438,16 @@ def main():
             calib_loader = DataLoader(
                 calib_ds, batch_size=args.batch_size, shuffle=False,
                 num_workers=args.num_workers if not use_hf else 0,
-                pin_memory=True,
-            )
+                pin_memory=True)
             eval_loader = DataLoader(
                 eval_ds, batch_size=args.batch_size, shuffle=False,
                 num_workers=args.num_workers if not use_hf else 0,
-                pin_memory=True,
-            )
+                pin_memory=True)
 
             result = run_single_model(
                 model_name, calib_loader, eval_loader, device,
-                calibrator=args.calibrator, percentile=args.percentile,
-                export_onnx=args.export_onnx,
-            )
+                act_mode=args.act_mode, calibrator=args.calibrator,
+                percentile=args.percentile, export_onnx=args.export_onnx)
             all_results[model_name] = result
 
         except Exception as e:
@@ -455,17 +457,15 @@ def main():
 
         torch.cuda.empty_cache()
         json.dump(all_results, open(args.output, "w"), indent=2)
-        n = len([1 for r in all_results.values() if "fp_top1" in r])
-        print(f"  [saved {n}/{len(args.models)} -> {args.output}]")
 
     # Summary
     print(f"\n{'='*70}")
-    print(f"{'Model':<28}{'FP32':>8}{'INT8_PC':>10}{'Δ':>10}")
+    print(f"{'Model':<28}{'FP32':>8}{'INT8':>10}{'Δ':>10}")
     print("-" * 70)
     for m in args.models:
         r = all_results.get(m, {})
         if "fp_top1" in r:
-            print(f"{m:<28}{r['fp_top1']*100:>7.2f}%{r['int8_pc_top1']*100:>9.2f}%"
+            print(f"{m:<28}{r['fp_top1']*100:>7.2f}%{r['int8_top1']*100:>9.2f}%"
                   f"{r['delta']*100:>+9.2f}%")
         else:
             print(f"{m:<28}  {'FAILED':>8}")
