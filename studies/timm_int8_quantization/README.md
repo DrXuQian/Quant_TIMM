@@ -46,6 +46,7 @@ fail for two compounding reasons, both verified on real ImageNet top-1:
 |---|---|
 | `run_experiment.py` | **Main entry.** Real-data experiment: exports a model, quantizes it with every backend/method/precision combo (each in an isolated subprocess), measures real top-1 accuracy, FP-agreement, cosine sim. |
 | `real_data.py` | Loads real labeled ImageNet val images and applies each model's timm preprocessing. |
+| `download_imagenet_val.py` | Fetches a small labeled ImageNet-1k val sample from Hugging Face into `imagenet_val_sample/` (the format `real_data.py` expects). |
 | `export_timm_to_onnx.py` | Standalone ONNX exporter for the 81 benchmark models. |
 | `calibration_data.py` | Calibration `DataReader`s (real + synthetic) for the standalone quantizer. |
 | `quantize_modelopt.py` | Standalone ModelOpt / ONNX-Runtime quantizer (sweep helper). |

@@ -44,8 +44,22 @@ validation images**. `run_experiment.py` reads them from:
 studies/timm_int8_quantization/imagenet_val_sample/
 ```
 
-This directory is **git-ignored — you provide it.** Two accepted layouts
-(handled by `real_data.py`):
+This directory is **git-ignored — you provide it.**
+
+**Easiest — auto-fetch from Hugging Face.** The `imagenet-1k` dataset is gated:
+accept its license on the [dataset page](https://huggingface.co/datasets/ILSVRC/imagenet-1k),
+then authenticate once. The helper streams a class-diverse sample (no full
+download) straight into the expected format:
+
+```bash
+pip install datasets huggingface_hub pillow
+huggingface-cli login          # one-time (or set HF_TOKEN)
+python download_imagenet_val.py --count 500
+```
+
+This writes `imagenet_val_sample/val_*.jpg` + `labels.json` with labels already
+in timm's 0–999 synset order — then jump to §4. Prefer to bring your own images?
+Use either layout below (both handled by `real_data.py`):
 
 **A. `labels.json` manifest (recommended)**
 
