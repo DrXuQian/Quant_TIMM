@@ -1,0 +1,30 @@
+{
+  "beit_base_patch16_224": {
+    "fp_top1": 0.8522,
+    "fp_ms_per_img": 9.09,
+    "methods": {
+      "modelopt/max": {
+        "top1": 0.0357,
+        "delta_acc": -0.8165,
+        "agreement": 0.0372,
+        "cosine": 0.107,
+        "quant_s": 852.1,
+        "has_naninf": false
+      }
+    }
+  },
+  "adv_inception_v3": {
+    "fp_top1": 0.776,
+    "fp_ms_per_img": 8.43,
+    "methods": {
+      "modelopt/max": {
+        "top1": 0.0187,
+        "delta_acc": -0.7573,
+        "agreement": 0.0193,
+        "cosine": 0.0505,
+        "quant_s": 251.5,
+        "has_naninf": false
+      }
+    }
+  }
+}
