@@ -11,3 +11,4 @@ experiment_results.json
 
 # Keep curated results under results/
 !results/
+__pycache__/
