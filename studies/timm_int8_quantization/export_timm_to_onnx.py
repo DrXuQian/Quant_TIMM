@@ -73,9 +73,11 @@ def export_model(model_name: str, output_dir: str, opset: int = 17):
     input_size = model.default_cfg.get("input_size", (3, 224, 224))
     dummy_input = torch.randn(1, *input_size)
 
-    # Prefer the legacy TorchScript exporter (dynamo=False): the torch 2.x dynamo
-    # exporter fails to decompose some graphs (e.g. beit attention). Fall back to
-    # the plain call on older torch that doesn't accept the `dynamo` kwarg.
+    # Prefer the legacy TorchScript exporter (dynamo=False): the torch dynamo
+    # exporter mishandles some graphs (e.g. beit's transpose+reshape fails with
+    # "Cannot view a tensor ... as ..." under symbolic shapes). Only fall back to
+    # the plain call on old torch that lacks the `dynamo` kwarg (TypeError) — NOT
+    # to the dynamo default, which would reintroduce the failure.
     try:
         torch.onnx.export(
             model, dummy_input, output_path, opset_version=opset,
@@ -83,7 +85,7 @@ def export_model(model_name: str, output_dir: str, opset: int = 17):
             dynamic_axes={"input": {0: "batch_size"}, "output": {0: "batch_size"}},
             dynamo=False,
         )
-    except Exception:
+    except TypeError:
         torch.onnx.export(
             model, dummy_input, output_path, opset_version=opset,
             input_names=["input"], output_names=["output"],

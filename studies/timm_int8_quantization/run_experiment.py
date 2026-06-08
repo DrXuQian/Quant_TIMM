@@ -74,9 +74,12 @@ def export_if_needed(model_name):
     model = timm.create_model(model_name, pretrained=True).eval()
     size = model.default_cfg.get("input_size", (3, 224, 224))
     dummy = torch.randn(1, *size)
-    # The torch 2.x dynamo exporter fails to decompose some graphs (e.g. beit's
-    # attention). Fall back to the legacy TorchScript exporter (dynamo=False),
-    # which is more robust for these timm models.
+    # The torch dynamo ONNX exporter mishandles some graphs: e.g. beit's
+    # attn.transpose(1, 2).reshape(B, N, C) raises "Cannot view a tensor with
+    # shape [s,197,12,64] ... as (s,197,768)" under symbolic shapes. The legacy
+    # TorchScript exporter (dynamo=False) traces these fine. Only fall back to the
+    # bare call on old torch that lacks the `dynamo` kwarg (TypeError) — NOT to the
+    # dynamo default, which would reintroduce the beit failure.
     try:
         torch.onnx.export(
             model, dummy, path, opset_version=17,
@@ -84,7 +87,7 @@ def export_if_needed(model_name):
             dynamic_axes={"input": {0: "batch"}, "output": {0: "batch"}},
             dynamo=False,
         )
-    except Exception:
+    except TypeError:
         torch.onnx.export(
             model, dummy, path, opset_version=17,
             input_names=["input"], output_names=["output"],
