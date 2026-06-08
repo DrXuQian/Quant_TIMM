@@ -56,6 +56,9 @@ fail for two compounding reasons, both verified on real ImageNet top-1:
 
 ## Reproduce
 
+> **Full step-by-step run guide** (install, ImageNet data prep, model export, all
+> entry points, reading results): see **[`RUNNING.md`](RUNNING.md)**. Quick version:
+
 ```bash
 pip install timm torch torchvision onnx onnxruntime nvidia-modelopt[onnx]
 
