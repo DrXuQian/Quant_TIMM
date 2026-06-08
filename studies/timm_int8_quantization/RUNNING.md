@@ -9,10 +9,11 @@ experiments, and read the results. For the *findings* (root cause + fixes), see
 
 ## 0. Things to know first
 
-- **Runs on CPU.** Everything executes on the onnxruntime `CPUExecutionProvider` —
-  no GPU required. This is an **accuracy** study (real ImageNet top-1), not a
-  latency study. All quantized graphs are FP32-scale QDQ that the CPU EP runs
-  faithfully.
+- **CPU by default, GPU optional.** Quantized graphs are FP32-scale QDQ that the
+  onnxruntime CPU EP runs faithfully, so this is an **accuracy** study (real
+  ImageNet top-1), not a latency study. Evaluating on the **full 50k val set** is
+  CPU-heavy though — pass `--device cuda` (needs `onnxruntime-gpu`) to run the
+  eval inference on a GPU.
 - **Authoritative entry point: `run_experiment.py`** (measures real labeled
   top-1). `run_study.sh` is an older end-to-end sweep kept for convenience (§6).
 - **Verified versions:** `nvidia-modelopt 0.44.0`, `onnxruntime 1.26.0`, recent
@@ -35,75 +36,66 @@ so the first run needs network access.
 
 ---
 
-## 2. Prepare the data (real ImageNet validation images)
+## 2. Prepare the data (calibration + evaluation sets)
 
-Every real number in this study comes from **real, labeled ImageNet-1k
-validation images**. `run_experiment.py` reads them from:
+The standard setup uses **two disjoint pools**, each git-ignored and provided by
+you:
 
-```
-studies/timm_int8_quantization/imagenet_val_sample/
-```
+| Pool | Source | Default dir | Used for |
+|---|---|---|---|
+| **Calibration** | a small **train**-split subset (~512 imgs) | `imagenet_calib/` | estimating activation ranges |
+| **Evaluation** | the **full validation** set (50k imgs) | `imagenet_val/` | the reported top-1 — `--eval` defaults to ALL of it |
 
-This directory is **git-ignored — you provide it.**
+Calibrating on train and evaluating on the *complete* val set is the
+methodologically clean setup: no val image is ever calibrated on, and the
+reported number is the real ImageNet-1k top-1.
 
-**Easiest — auto-fetch from Hugging Face.** The `imagenet-1k` dataset is gated:
-accept its license on the [dataset page](https://huggingface.co/datasets/ILSVRC/imagenet-1k),
-then authenticate once. The helper streams a class-diverse sample (no full
-download) straight into the expected format:
+**Auto-fetch from Hugging Face.** `imagenet-1k` is gated: accept its license on
+the [dataset page](https://huggingface.co/datasets/ILSVRC/imagenet-1k) and
+authenticate once, then run the two fetches:
 
 ```bash
 pip install datasets huggingface_hub pillow
 huggingface-cli login          # one-time (or set HF_TOKEN)
-python download_imagenet_val.py --count 500
+
+# evaluation: the full 50k validation set  (~6 GB on disk)
+python download_imagenet_val.py --split validation --full --out imagenet_val
+
+# calibration: a small class-diverse train subset
+python download_imagenet_val.py --split train --count 512 --out imagenet_calib
 ```
 
-This writes `imagenet_val_sample/val_*.jpg` + `labels.json` with labels already
-in timm's 0–999 synset order — then jump to §4. Prefer to bring your own images?
-Use either layout below (both handled by `real_data.py`):
+Both write `<dir>/img_*.jpg` + `labels.json` with labels already in timm's 0–999
+synset order. The dirs match `run_experiment.py`'s `--eval-dir` / `--calib-dir`
+defaults, so you can jump straight to §4.
 
-**A. `labels.json` manifest (recommended)**
+> **Quick smoke test** instead of the full 50k? Fetch a small val sample
+> (`--split validation --count 500 --out imagenet_val`) — the run still works, it
+> just evaluates on whatever is in `--eval-dir`.
 
-```
-imagenet_val_sample/
-├── labels.json
-├── img_0000.jpg
-├── img_0001.jpg
-└── ...
-```
+**Bring your own images.** Each dir can instead be filled by hand, in either
+layout handled by `real_data.py`:
 
-```json
-// labels.json
-[
-  {"file": "img_0000.jpg", "label": 65},
-  {"file": "img_0001.jpg", "label": 970}
-]
-```
-
-**B. Label encoded in the filename** (used when no `labels.json` is present)
-
-```
-imagenet_val_sample/img_0000_lab065.jpg    # label parsed from the "lab065" suffix
-imagenet_val_sample/img_0001_lab970.jpg
-```
+- **`labels.json` manifest** — a list of `{"file": "...", "label": <int>}` plus
+  the referenced image files.
+- **Label in the filename** — files named `*lab<NN>.jpg` (e.g.
+  `img_0000_lab065.jpg`), used when no `labels.json` is present.
 
 **Rules:**
 
 - **`label` is the ImageNet-1k class index in synset / training order**
-  (`0 = tench`, `1 = goldfish`, …, `999`). This matches timm's pretrained output
-  indexing. Do **not** use an alphabetical or custom mapping, or measured
-  accuracy will read ≈ 0.
-- Provide at least **`--calib` + `--eval` images** (defaults `150 + 250 = 400`).
-  The first `--calib` images are used for calibration, the next `--eval` for
-  evaluation — so the set must be **class-diverse / pre-shuffled** (don't hand it
-  400 images of one class).
-- Any standard ImageNet-1k val subset works. If you have the official
-  `ILSVRC2012_img_val` images + ground-truth, map the labels into the 0–999
-  synset index order and emit `labels.json`.
+  (`0 = tench`, …, `999`) — matches timm's pretrained output indexing. A custom or
+  alphabetical mapping makes measured accuracy read ≈ 0.
+- The calibration set just needs to be **class-diverse** (a few hundred images is
+  plenty); the evaluation set should be the **complete val set** for a faithful
+  top-1 (or any subset for a quick check).
+- Already have the official `ILSVRC2012_img_val` + ground-truth? Map its labels
+  into the 0–999 synset order and write `labels.json` into `imagenet_val/`.
 
-> The `run_study.sh` path (§6) instead takes a `--dataset /path/to/imagenet/val`
-> **directory** (recursively scanned for `*.jpg/*.png`); without it, that path
-> falls back to synthetic calibration noise. `run_experiment.py` **always** uses
-> `imagenet_val_sample/`.
+> The legacy `run_study.sh` path (§6) instead takes a single
+> `--dataset /path/to/imagenet/val` directory (recursively scanned), or falls
+> back to synthetic calibration noise. The `run_experiment.py` path uses the two
+> dirs above.
 
 ---
 
@@ -134,8 +126,9 @@ Pretrained weights download automatically. `onnx_models/` is git-ignored.
 python run_experiment.py \
     --models efficientnet_b0 lcnet_050 hardcorenas_a rexnet_100 mobilevit_s \
              repvgg_a2 adv_inception_v3 convmixer_768_32 beit_base_patch16_224 \
-    --calib 150 --eval 250 \
+    --device cuda \
     --output results/my_run.json
+# defaults: 128 calib imgs from imagenet_calib/, eval = ALL of imagenet_val/ (full-val top-1)
 ```
 
 For each model it exports (if needed), then quantizes with all **7 configs** —
@@ -150,8 +143,11 @@ every model** (a crash never loses prior work).
 
 | Flag | Meaning |
 |---|---|
-| `--calib N` | calibration image count (default 150). Heavier transformers were run as low as 32–64. |
-| `--eval M` | evaluation image count (default 250). Needs `N + M` images available. |
+| `--eval-dir DIR` | evaluation images dir (default `imagenet_val`, the full val set). |
+| `--calib-dir DIR` | calibration images dir (default `imagenet_calib`, a train subset). |
+| `--eval M` | evaluation image count. **Default = ALL** images in `--eval-dir` (full val); set e.g. `--eval 2000` for a quick run. |
+| `--calib N` | calibration image count (default 128). |
+| `--device cpu\|cuda` | EP for eval inference (default `cpu`; `cuda` needs `onnxruntime-gpu`). |
 | `--resume` | reload `--output` and skip models already completed. |
 | `--output PATH` | JSON output path. **Note:** the literal name `experiment_results.json` is git-ignored (transient); use any other name under `results/` to keep it. |
 
@@ -160,8 +156,11 @@ honest degradation), `agree` (same predicted class as FP), `cos` (logit cosine
 similarity), `qnt_s` (quantize seconds). `!!NaN/Inf` flags a numerically broken
 graph.
 
-**Runtime:** CPU-only; each quantization ≈ 5–12 s plus eval inference, so roughly
-1–2 min per model across all 7 methods (~10–20 min for the 9-model sweep).
+**Runtime / memory.** Eval images are decoded lazily (one at a time), so the full
+50k val set stays within memory. But full-val eval is heavy on CPU — a transformer
+at ~50–100 ms/img × 50k × (1 FP + 7 quant) ≈ several hours per model. Use
+`--device cuda`, or cap with `--eval N`, for faster turnarounds. Quantization
+itself runs on CPU (~5–12 s per method) regardless of `--device`.
 
 ---
 
@@ -178,6 +177,10 @@ python experiment_zeropoint.py \
 
 Prints `sym` vs `ASYM` top-1 for `ort/minmax`, `ort/pct99.99`,
 `modelopt/entropy`. Reference output: `results/zeropoint_results.json`.
+
+> This focused A/B uses its own small pool `imagenet_val_sample/` (calib + eval
+> sliced from it, ~300 imgs is enough). Populate it with:
+> `python download_imagenet_val.py --count 500 --out imagenet_val_sample`.
 
 ---
 
@@ -244,10 +247,11 @@ python recover_from_log.py run.log results/user_models_results.json
 
 ## 8. Generated artifacts (all git-ignored)
 
-`onnx_models/`, `quantized_models/`, `imagenet_val_sample/`, `*.onnx(.data)`,
-`*.log`, and the default `experiment_results.json`. Only curated JSON under
-`results/` is committed. The generated directories are safe to delete anytime —
-they rebuild on the next run.
+`onnx_models/`, `quantized_models/`, the data dirs (`imagenet_val/`,
+`imagenet_calib/`, `imagenet_val_sample/`), `*.onnx(.data)`, `*.log`, and the
+default `experiment_results.json`. Only curated JSON under `results/` is
+committed. The generated directories are safe to delete anytime — they rebuild on
+the next run (data dirs via `download_imagenet_val.py`).
 
 ---
 

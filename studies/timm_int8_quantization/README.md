@@ -46,7 +46,7 @@ fail for two compounding reasons, both verified on real ImageNet top-1:
 |---|---|
 | `run_experiment.py` | **Main entry.** Real-data experiment: exports a model, quantizes it with every backend/method/precision combo (each in an isolated subprocess), measures real top-1 accuracy, FP-agreement, cosine sim. |
 | `real_data.py` | Loads real labeled ImageNet val images and applies each model's timm preprocessing. |
-| `download_imagenet_val.py` | Fetches a small labeled ImageNet-1k val sample from Hugging Face into `imagenet_val_sample/` (the format `real_data.py` expects). |
+| `download_imagenet_val.py` | Fetches labeled ImageNet-1k images from Hugging Face — full `--split validation --full` for evaluation, or a small `--split train` subset for calibration — into the format `real_data.py` expects. |
 | `export_timm_to_onnx.py` | Standalone ONNX exporter for the 81 benchmark models. |
 | `calibration_data.py` | Calibration `DataReader`s (real + synthetic) for the standalone quantizer. |
 | `quantize_modelopt.py` | Standalone ModelOpt / ONNX-Runtime quantizer (sweep helper). |
@@ -63,13 +63,14 @@ fail for two compounding reasons, both verified on real ImageNet top-1:
 ```bash
 pip install timm torch torchvision onnx onnxruntime nvidia-modelopt[onnx]
 
-# Provide ~400 real labeled ImageNet val images in imagenet_val_sample/
-#   <dir>/img_0000_lab<LABEL>.jpg  + labels.json   (see real_data.py)
-# (any ImageNet-1k val subset with standard synset label ordering works)
+# Data (gated imagenet-1k; accept license + `huggingface-cli login` first):
+python download_imagenet_val.py --split validation --full --out imagenet_val   # full 50k val (eval)
+python download_imagenet_val.py --split train --count 512  --out imagenet_calib # train subset (calib)
 
 python run_experiment.py \
     --models efficientnet_b0 lcnet_050 hardcorenas_a rexnet_100 mobilevit_s \
-    --calib 150 --eval 250 --output results/experiment_results.json
+    --device cuda --output results/my_run.json
+# default: 128 calib imgs from imagenet_calib/, eval = ALL of imagenet_val/ (full-val top-1)
 ```
 
 Each model is quantized with: `ort/minmax`, `ort/entropy`,

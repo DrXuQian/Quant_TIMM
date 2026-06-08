@@ -2,6 +2,8 @@
 onnx_models/
 quantized_models/
 imagenet_val_sample/
+imagenet_val/
+imagenet_calib/
 *.onnx
 *.onnx.data
 *.data

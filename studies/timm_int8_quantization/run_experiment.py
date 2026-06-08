@@ -28,7 +28,7 @@ import warnings
 import numpy as np
 import onnxruntime as ort
 
-from real_data import load_image_label_pairs, RealImageNetDataReader
+from real_data import load_image_label_paths, LazyRealImageNetDataReader
 
 warnings.filterwarnings("ignore")
 ort.set_default_logger_severity(3)
@@ -96,10 +96,17 @@ def get_input_name(onnx_path):
     return sess.get_inputs()[0].name
 
 
-def build_calib_samples(model_name, calib_count, input_name):
-    pairs = load_image_label_pairs()[:calib_count]
-    reader = RealImageNetDataReader(model_name, pairs, input_name=input_name)
-    return [{input_name: t} for t in reader.tensors]
+def build_calib_samples(model_name, calib_count, input_name, calib_dir):
+    items = load_image_label_paths(calib_dir)[:calib_count]
+    reader = LazyRealImageNetDataReader(model_name, items, input_name=input_name)
+    samples = []
+    reader.rewind()
+    while True:
+        s = reader.get_next()
+        if s is None:
+            break
+        samples.append(s)
+    return samples
 
 
 # --------------------------------------------------------------------------- #
@@ -129,7 +136,7 @@ def worker_main(args):
     out_path = args.out
     model_name = args.model
     input_name = get_input_name(onnx_path)
-    calib_samples = build_calib_samples(model_name, args.calib, input_name)
+    calib_samples = build_calib_samples(model_name, args.calib, input_name, args.calib_dir)
 
     if args.backend == "modelopt":
         import modelopt.onnx.quantization as moq
@@ -191,12 +198,13 @@ def worker_main(args):
 
 
 def spawn_quantize(model_name, onnx_path, out_path, backend, method, per_channel,
-                   calib, high_precision, percentile):
+                   calib, high_precision, percentile, calib_dir):
     cmd = [
         sys.executable, os.path.abspath(__file__), "--worker",
         "--onnx", onnx_path, "--out", out_path, "--model", model_name,
         "--backend", backend, "--method", method, "--calib", str(calib),
         "--high-precision", high_precision, "--percentile", str(percentile),
+        "--calib-dir", calib_dir,
     ]
     if per_channel:
         cmd.append("--per-channel")
@@ -210,10 +218,11 @@ def spawn_quantize(model_name, onnx_path, out_path, backend, method, per_channel
 # --------------------------------------------------------------------------- #
 # Evaluation (pure inference, safe in parent process)
 # --------------------------------------------------------------------------- #
-def run_session_predictions(onnx_path, reader):
+def run_session_predictions(onnx_path, reader, providers=None):
     so = ort.SessionOptions()
     so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-    sess = ort.InferenceSession(onnx_path, so, providers=["CPUExecutionProvider"])
+    sess = ort.InferenceSession(onnx_path, so,
+                                providers=providers or ["CPUExecutionProvider"])
     reader.rewind()
     logits, t0, n = [], time.time(), 0
     while True:
@@ -240,20 +249,27 @@ def cosine(a, b):
     return float(a.dot(b) / (np.linalg.norm(a) * np.linalg.norm(b) + 1e-12))
 
 
-def run_model(model_name, calib_count, eval_count):
+def run_model(model_name, calib_count, eval_count, calib_dir, eval_dir, providers):
     onnx_path = export_if_needed(model_name)
     input_name = get_input_name(onnx_path)
 
-    pairs = load_image_label_pairs()
-    eval_pairs = pairs[calib_count:calib_count + eval_count]
-    eval_reader = RealImageNetDataReader(model_name, eval_pairs, input_name=input_name)
+    # Evaluation = the (full) val pool; calibration = a separate pool (train).
+    # If both dirs are the same, fall back to disjoint slices so no image is both
+    # calibrated on and evaluated. Images are decoded lazily so the full 50k-image
+    # val set stays within memory.
+    eval_items = load_image_label_paths(eval_dir)
+    if os.path.abspath(calib_dir) == os.path.abspath(eval_dir):
+        eval_items = eval_items[calib_count:]
+    if eval_count is not None:
+        eval_items = eval_items[:eval_count]
+    eval_reader = LazyRealImageNetDataReader(model_name, eval_items, input_name=input_name)
 
-    fp_logits, fp_time = run_session_predictions(onnx_path, eval_reader)
+    fp_logits, fp_time = run_session_predictions(onnx_path, eval_reader, providers)
     fp_acc = accuracy(fp_logits, eval_reader.labels)
 
     print(f"\n{'='*74}")
     print(f"{model_name}  | FP top-1: {fp_acc*100:.1f}%  ({fp_time*1000:.1f} ms/img, "
-          f"{calib_count} calib / {eval_count} eval)")
+          f"{calib_count} calib / {len(eval_items)} eval)")
     print(f"{'='*74}")
     print(f"{'method':<22}{'top1':>8}{'Δacc':>8}{'agree':>8}{'cos':>9}{'qnt_s':>8}")
     print("-" * 74)
@@ -268,10 +284,11 @@ def run_model(model_name, calib_count, eval_count):
         try:
             t0 = time.time()
             spawn_quantize(model_name, onnx_path, out_path, backend, method,
-                           per_channel, calib_count, high_precision, percentile)
+                           per_channel, calib_count, high_precision, percentile,
+                           calib_dir)
             qnt_s = time.time() - t0
 
-            q_logits, _ = run_session_predictions(out_path, eval_reader)
+            q_logits, _ = run_session_predictions(out_path, eval_reader, providers)
             bad = not np.isfinite(q_logits).all()
             q_acc = accuracy(q_logits, eval_reader.labels)
             agr = agreement(fp_logits, q_logits)
@@ -302,8 +319,16 @@ def main():
     ap.add_argument("--zero-point", action="store_true",
                     help="asymmetric INT8 activations (zero_point != 0)")
     ap.add_argument("--models", nargs="+")
-    ap.add_argument("--calib", type=int, default=150)
-    ap.add_argument("--eval", type=int, default=250)
+    ap.add_argument("--calib", type=int, default=128,
+                    help="number of calibration images (from --calib-dir)")
+    ap.add_argument("--eval", type=int, default=None,
+                    help="number of eval images; default = ALL in --eval-dir (full val set)")
+    ap.add_argument("--calib-dir", default="imagenet_calib",
+                    help="calibration images dir (default: imagenet_calib, a train-split subset)")
+    ap.add_argument("--eval-dir", default="imagenet_val",
+                    help="evaluation images dir (default: imagenet_val, the full val set)")
+    ap.add_argument("--device", choices=["cpu", "cuda"], default="cpu",
+                    help="onnxruntime EP for eval inference (cuda needs onnxruntime-gpu)")
     ap.add_argument("--output", type=str, default="experiment_results.json")
     ap.add_argument("--resume", action="store_true",
                     help="load existing --output and skip models already completed")
@@ -316,11 +341,30 @@ def main():
     if not args.models:
         ap.error("--models is required")
 
-    pairs = load_image_label_pairs()
-    if len(pairs) < args.calib + 1:
-        raise RuntimeError(f"Only {len(pairs)} real images available")
-    print(f"Real images: {len(pairs)} total -> {args.calib} calib, "
-          f"{min(args.eval, len(pairs)-args.calib)} eval")
+    calib_items = load_image_label_paths(args.calib_dir)
+    eval_items = load_image_label_paths(args.eval_dir)
+    if not calib_items:
+        raise RuntimeError(
+            f"No calibration images in {args.calib_dir!r}. Fetch some with:\n"
+            f"  python download_imagenet_val.py --split train --count 512 "
+            f"--out {args.calib_dir}")
+    if not eval_items:
+        raise RuntimeError(
+            f"No evaluation images in {args.eval_dir!r}. Fetch the full val set:\n"
+            f"  python download_imagenet_val.py --split validation --full "
+            f"--out {args.eval_dir}")
+    same = os.path.abspath(args.calib_dir) == os.path.abspath(args.eval_dir)
+    n_eval = len(eval_items) - (args.calib if same else 0)
+    if args.eval is not None:
+        n_eval = min(args.eval, n_eval)
+    providers = (["CUDAExecutionProvider", "CPUExecutionProvider"]
+                 if args.device == "cuda" else ["CPUExecutionProvider"])
+    full = args.eval is None and not same
+    print(f"Calibration: {min(args.calib, len(calib_items))} imgs from "
+          f"{args.calib_dir!r} ({len(calib_items)} available)")
+    print(f"Evaluation:  {n_eval} imgs from {args.eval_dir!r} "
+          f"({len(eval_items)} available){'  [full val]' if full else ''}  "
+          f"| device={args.device}")
 
     # Resume: keep previously completed models, skip them this run.
     all_results = {}
@@ -335,7 +379,8 @@ def main():
             print(f"[{m}] skip (already done)")
             continue
         try:
-            all_results[m] = run_model(m, args.calib, args.eval)
+            all_results[m] = run_model(m, args.calib, args.eval,
+                                       args.calib_dir, args.eval_dir, providers)
         except Exception as e:
             print(f"[{m}] FAILED: {e}")
             all_results[m] = {"error": str(e)}

@@ -22,7 +22,7 @@ import numpy as np
 import onnxruntime as ort
 
 import run_experiment as R
-from real_data import load_image_label_pairs, RealImageNetDataReader
+from real_data import load_image_label_pairs, RealImageNetDataReader, SAMPLE_DIR
 
 ort.set_default_logger_severity(3)
 
@@ -43,6 +43,7 @@ def spawn(model_name, onnx_path, out_path, backend, method, percentile, zero_poi
         "--onnx", onnx_path, "--out", out_path, "--model", model_name,
         "--backend", backend, "--method", method, "--calib", str(calib),
         "--high-precision", "fp32", "--percentile", str(percentile), "--per-channel",
+        "--calib-dir", SAMPLE_DIR,
     ]
     if zero_point:
         cmd.append("--zero-point")

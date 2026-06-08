@@ -81,3 +81,63 @@ class RealImageNetDataReader(_Base):
 
     def __len__(self):
         return len(self.tensors)
+
+
+def load_image_label_paths(sample_dir: str = SAMPLE_DIR):
+    """Return list of (image_path, int_label) WITHOUT decoding the images.
+
+    Mirrors load_image_label_pairs but keeps memory flat for large (full-val)
+    evaluation sets: images are decoded lazily, one at a time, downstream.
+    """
+    labels_json = os.path.join(sample_dir, "labels.json")
+    if os.path.exists(labels_json):
+        meta = json.load(open(labels_json))
+        return [(os.path.join(sample_dir, m["file"]), int(m["label"])) for m in meta]
+    out = []
+    for fn in sorted(glob.glob(os.path.join(sample_dir, "*.jpg"))):
+        base = os.path.basename(fn)
+        lab = int(base.split("lab")[-1].split(".")[0]) if "lab" in base else -1
+        out.append((fn, lab))
+    return out
+
+
+class LazyRealImageNetDataReader(_Base):
+    """Like RealImageNetDataReader but decodes/transforms one image at a time.
+
+    Holds only file paths + labels in memory, so it scales to the full 50k-image
+    ImageNet validation set. Each full pass re-reads images from disk (trading
+    memory for CPU). Implements get_next / get_first / rewind.
+    """
+
+    def __init__(self, model_name, items, input_name="input"):
+        model = timm.create_model(model_name, pretrained=False)
+        cfg = resolve_data_config(model.default_cfg)
+        self.transform = create_transform(**cfg, is_training=False)
+        del model
+
+        self.input_name = input_name
+        self.items = list(items)
+        self.labels = [int(lab) for _, lab in self.items]
+        self.index = 0
+
+    def _tensor(self, path):
+        img = Image.open(path).convert("RGB")
+        return self.transform(img).unsqueeze(0).numpy().astype(np.float32)
+
+    def get_next(self):
+        if self.index >= len(self.items):
+            return None
+        path, _ = self.items[self.index]
+        self.index += 1
+        return {self.input_name: self._tensor(path)}
+
+    def get_first(self):
+        if not self.items:
+            return None
+        return {self.input_name: self._tensor(self.items[0][0])}
+
+    def rewind(self):
+        self.index = 0
+
+    def __len__(self):
+        return len(self.items)
