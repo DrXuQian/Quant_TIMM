@@ -34,6 +34,14 @@ CPU-only `torch` is fine. The **first** model export downloads pretrained
 weights from the timm / Hugging Face hub (cached under `~/.cache/huggingface`),
 so the first run needs network access.
 
+> **`CERTIFICATE_VERIFY_FAILED` to huggingface.co / hf-mirror.com?** The entry
+> scripts import `insecure_ssl.py`, which (active by default) routes downloads
+> through `hf-mirror.com` and disables TLS verification — including the `requests`
+> path that `huggingface_hub` actually uses (patching only `httpx`/stdlib `ssl` is
+> not enough). Keep verification ON with `export TIMM_INT8_INSECURE_SSL=0`. The
+> proper fixes (update `certifi`, add your corporate root CA) are preferable when
+> available.
+
 ---
 
 ## 2. Prepare the data (calibration + evaluation sets)

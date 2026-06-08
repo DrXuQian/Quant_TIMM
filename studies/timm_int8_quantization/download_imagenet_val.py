@@ -23,6 +23,8 @@ By default it STREAMS the split (no full-repo download). `--full` also streams,
 but keeps every image in the split instead of a sample.
 """
 
+import insecure_ssl  # noqa: F401 — TLS bypass for restricted nets (TIMM_INT8_INSECURE_SSL=0 to disable)
+
 import argparse
 import json
 import os

@@ -12,6 +12,8 @@ Usage:
     python experiment_zeropoint.py --models lcnet_050 efficientnet_b0 mobilevit_s
 """
 
+import insecure_ssl  # noqa: F401 — TLS bypass for restricted nets (TIMM_INT8_INSECURE_SSL=0 to disable)
+
 import argparse
 import os
 import subprocess

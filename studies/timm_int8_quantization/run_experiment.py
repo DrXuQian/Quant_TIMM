@@ -17,6 +17,8 @@ Usage:
     python run_experiment.py --models regnetx_002 --calib 150 --eval 250
 """
 
+import insecure_ssl  # noqa: F401 — TLS bypass for restricted nets (TIMM_INT8_INSECURE_SSL=0 to disable)
+
 import argparse
 import json
 import os

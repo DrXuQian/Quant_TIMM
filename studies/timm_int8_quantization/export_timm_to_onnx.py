@@ -1,5 +1,7 @@
 """Export timm models to ONNX format for quantization experiments."""
 
+import insecure_ssl  # noqa: F401 — TLS bypass for restricted nets (TIMM_INT8_INSECURE_SSL=0 to disable)
+
 import argparse
 import os
 import timm

@@ -47,6 +47,7 @@ fail for two compounding reasons, both verified on real ImageNet top-1:
 | `run_experiment.py` | **Main entry.** Real-data experiment: exports a model, quantizes it with every backend/method/precision combo (each in an isolated subprocess), measures real top-1 accuracy, FP-agreement, cosine sim. |
 | `real_data.py` | Loads real labeled ImageNet val images and applies each model's timm preprocessing. |
 | `download_imagenet_val.py` | Fetches labeled ImageNet-1k images from Hugging Face — full `--split validation --full` for evaluation, or a small `--split train` subset for calibration — into the format `real_data.py` expects. |
+| `insecure_ssl.py` | Restricted-network TLS-verification bypass (active by default; routes HF through hf-mirror.com, disables `requests`/httpx/urllib verification). `TIMM_INT8_INSECURE_SSL=0` to disable. |
 | `export_timm_to_onnx.py` | Standalone ONNX exporter for the 81 benchmark models. |
 | `calibration_data.py` | Calibration `DataReader`s (real + synthetic) for the standalone quantizer. |
 | `quantize_modelopt.py` | Standalone ModelOpt / ONNX-Runtime quantizer (sweep helper). |
