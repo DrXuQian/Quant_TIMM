@@ -168,13 +168,19 @@ def recalibrate_percentile(qmodel, calib_loader, device, percentile=99.9,
 
     orig_amaxes = {n: q._amax.data.clone() for n, q in input_qs}
 
-    # Try patched HistogramCalibrator first
+    # Try patched HistogramCalibrator first (monkey patch or source patch)
     try:
         from modelopt.torch.quantization.calib.histogram import HistogramCalibrator
         HistogramCalibrator(num_bits=8, axis=1, num_bins=16)  # test per-channel
         use_histogram = True
     except (NotImplementedError, TypeError):
-        use_histogram = False
+        try:
+            import patch_histogram_perchannel  # noqa: F401
+            from modelopt.torch.quantization.calib.histogram import HistogramCalibrator
+            HistogramCalibrator(num_bits=8, axis=1, num_bins=16)
+            use_histogram = True
+        except Exception:
+            use_histogram = False
 
     if use_histogram:
         # Patched path: collect per-channel histograms, compute percentile amax
